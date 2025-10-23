@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 import subprocess
 import os
@@ -8,16 +8,17 @@ from concurrent.futures import ThreadPoolExecutor
 from aiohttp import web
 import logging
 
-# Disable noisy logs
-logging.getLogger('aiohttp').setLevel(logging.WARNING)
-logging.getLogger('asyncio').setLevel(logging.WARNING)
-
 # ---------------- CONFIG ----------------
-# REPLACE THESE WITH YOUR ACTUAL CREDENTIALS
 API_ID = 20288994  # Replace with your API ID
 API_HASH = "d702614912f1ad370a0d18786002adbf"  # Replace with your API Hash
 BOT_TOKEN = "8456569596:AAG2vU1hdK5_JUze54LfKJCW9097qSn0Fz8"  # Replace with your Bot Token
 
+# ---------------- LOGGING ----------------
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('aiohttp').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
+
+# ---------------- APP ----------------
 app = Client(
     "SubtitleMergeBot",
     api_id=API_ID,
@@ -29,13 +30,11 @@ app = Client(
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=10)
 
-# ---------- Health Check Server for Koyeb ----------
+# ---------------- HEALTH CHECK ----------------
 async def health_check(request):
-    """Simple health check endpoint for Koyeb"""
     return web.Response(text="OK", status=200)
 
 async def start_health_server():
-    """Start the health check server on port 8080"""
     health_app = web.Application()
     health_app.router.add_get('/', health_check)
     health_app.router.add_get('/health', health_check)
@@ -43,16 +42,14 @@ async def start_health_server():
     
     runner = web.AppRunner(health_app)
     await runner.setup()
-    
     site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
     
     print("✅ Health check server running on port 8080")
     return runner
 
-# ---------- Helpers ----------
+# ---------------- HELPERS ----------------
 def human_readable(size):
-    """Convert bytes to human readable format"""
     if size is None:
         return "Unknown"
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -62,7 +59,6 @@ def human_readable(size):
     return f"{size:.2f} PB"
 
 def format_time(seconds):
-    """Convert seconds to human readable time"""
     if seconds < 60:
         return f"{int(seconds)}s"
     elif seconds < 3600:
@@ -84,9 +80,7 @@ class UltraFastProgressTracker:
         self.max_speeds = 10
         
     async def update(self, current, total):
-        """Ultra-fast progress tracking with speed averaging"""
         now = time.time()
-        
         if now - self.last_update < 1.5 and current < total:
             return
         
@@ -102,7 +96,6 @@ class UltraFastProgressTracker:
             self.speeds.pop(0)
         
         avg_speed = sum(self.speeds) / len(self.speeds) if self.speeds else 0
-        
         self.last_current = current
         
         percent = (current * 100 / total) if total > 0 else 0
@@ -113,7 +106,7 @@ class UltraFastProgressTracker:
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
         
         text = (
-            f"⚙️ **PROCESSING VIDEO**\n"
+            f"⚙️ **{self.action}**\n"
             f"`{bar}` **{percent:.1f}%**\n"
             f"⏱️ **ETA:** `{format_time(eta)}`"
         )
@@ -124,7 +117,7 @@ class UltraFastProgressTracker:
                 self.message_id, 
                 text
             )
-        except Exception as e:
+        except:
             pass
 
 class ProcessingTracker:
@@ -138,19 +131,14 @@ class ProcessingTracker:
         self.current_stage = 0
         
     async def update(self):
-        """Update processing progress with rotating stages"""
         now = time.time()
-        if now - self.last_update < 2:  # Update every 2 seconds
+        if now - self.last_update < 2:
             return
-            
         self.last_update = now
         elapsed = time.time() - self.start_time
         
-        # Rotate through stages
         stage_text = self.stages[self.current_stage]
         self.current_stage = (self.current_stage + 1) % len(self.stages)
-        
-        # Simple rotating dots
         dots = "..."[:int(now) % 4]
         
         text = (
@@ -158,17 +146,24 @@ class ProcessingTracker:
             f"{stage_text}{dots}\n"
             f"⏱️ **Elapsed:** `{format_time(elapsed)}`"
         )
-        
         try:
             await self.client.edit_message_text(
-                self.chat_id, 
-                self.message_id, 
+                self.chat_id,
+                self.message_id,
                 text
             )
-        except Exception as e:
+        except:
             pass
 
-# ---------- Bot Commands ----------
+async def update_processing_progress(tracker):
+    try:
+        while True:
+            await tracker.update()
+            await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        pass
+
+# ---------------- BOT COMMANDS ----------------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
     welcome_text = (
@@ -231,7 +226,6 @@ async def cancel_operation(client: Client, message: Message):
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
-    
     if message.video:
         file_obj = message.video
         file_type = "video"
@@ -303,13 +297,11 @@ async def handle_file(client: Client, message: Message):
 
 async def handle_subtitle(client: Client, message: Message):
     chat_id = message.chat.id
-    
     if chat_id not in user_data or "video" not in user_data[chat_id]:
         await message.reply_text("⚠️ **Please send your video file first!**")
         return
     
     sub_obj = message.document
-    
     if not sub_obj.file_name or not sub_obj.file_name.lower().endswith('.srt'):
         await message.reply_text("❌ **Invalid subtitle file!**\n\nPlease send a valid **.srt** file")
         return
@@ -334,17 +326,14 @@ async def handle_subtitle(client: Client, message: Message):
             progress=progress.update
         )
         
-        # Start processing with compact progress
+        # Start processing
         processing_tracker = ProcessingTracker(client, chat_id, status_msg.id)
-        await processing_tracker.update()
+        progress_task = asyncio.create_task(update_processing_progress(processing_tracker))
         
         video_path = user_data[chat_id]["video"]
         original_filename = user_data[chat_id]["filename"]
         base_name = os.path.splitext(original_filename)[0]
         output_file = f"merged_{chat_id}_{base_name}.mp4"
-        
-        # Start progress updates in background
-        progress_task = asyncio.create_task(update_processing_progress(processing_tracker))
         
         merge_start = time.time()
         cmd = [
@@ -365,11 +354,9 @@ async def handle_subtitle(client: Client, message: Message):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        
         stdout, stderr = await process.communicate()
         merge_time = time.time() - merge_start
         
-        # Stop progress updates
         progress_task.cancel()
         
         if process.returncode != 0:
@@ -434,7 +421,6 @@ async def handle_subtitle(client: Client, message: Message):
         
     except Exception as e:
         await status_msg.edit_text(f"❌ **PROCESSING FAILED!**\n\n**Error:** `{str(e)}`")
-        
         if chat_id in user_data:
             video_path = user_data[chat_id].get("video")
             if video_path and os.path.exists(video_path):
@@ -443,15 +429,6 @@ async def handle_subtitle(client: Client, message: Message):
                 except:
                     pass
             del user_data[chat_id]
-
-async def update_processing_progress(tracker):
-    """Update processing progress every 2 seconds"""
-    try:
-        while True:
-            await tracker.update()
-            await asyncio.sleep(2)
-    except asyncio.CancelledError:
-        pass
 
 @app.on_message(filters.command("stats"))
 async def stats_command(client: Client, message: Message):
@@ -471,32 +448,26 @@ async def stats_command(client: Client, message: Message):
 async def ping_command(client: Client, message: Message):
     await message.reply_text("🏓 **PONG!** Bot is alive and responsive!")
 
+# ---------------- MAIN ----------------
 async def main():
-    """Main function to start both health server and bot"""
-    # Start health check server
     print("🚀 Starting health check server...")
     health_runner = await start_health_server()
     
-    # Start the bot
     print("🤖 Starting Telegram Bot...")
     await app.start()
     
-    # Get bot info to confirm it's working
     me = await app.get_me()
     print(f"✅ Bot @{me.username} is now ONLINE!")
     print("📱 Bot is ready to receive messages...")
     
-    # Keep both services running
     try:
-        # Wait indefinitely
-        while True:
-            await asyncio.sleep(3600)  # Sleep for 1 hour
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
+        await idle()  # <-- Keeps bot alive
     finally:
         await app.stop()
         await health_runner.cleanup()
+        print("🛑 Bot stopped")
 
+# ---------------- ENTRY POINT ----------------
 if __name__ == "__main__":
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("🚀 ULTRA FAST SUBTITLE MERGE BOT")
