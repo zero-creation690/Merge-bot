@@ -7,10 +7,12 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from aiohttp import web
 import logging
+import signal
 
 # Disable noisy logs
 logging.getLogger('aiohttp').setLevel(logging.WARNING)
 logging.getLogger('asyncio').setLevel(logging.WARNING)
+logging.getLogger('pyrogram').setLevel(logging.WARNING)
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -33,6 +35,7 @@ app = Client(
 
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=10)
+is_running = True
 
 # ---------- Health Check Server for Koyeb ----------
 async def health_check(request):
@@ -179,7 +182,7 @@ class ProcessingTracker:
         except Exception:
             pass
 
-# ---------- /start ----------
+# ---------- Bot Commands ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
     welcome_text = (
@@ -487,29 +490,62 @@ async def stats_command(client: Client, message: Message):
 async def ping_command(client: Client, message: Message):
     await message.reply_text("🏓 **PONG!** Bot is alive and responsive!")
 
+# ---------- Graceful Shutdown ----------
+async def shutdown():
+    """Graceful shutdown"""
+    global is_running
+    is_running = False
+    print("\n🛑 Shutdown signal received...")
+    
+    # Cleanup user data files
+    for chat_id, data in user_data.items():
+        video_path = data.get("video")
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except:
+                pass
+    
+    user_data.clear()
+
 async def main():
     """Main function to start both services"""
-    # Start health check server
-    print("🚀 Starting health check server...")
-    health_runner = await start_health_server()
+    # Setup signal handlers for graceful shutdown
+    loop = asyncio.get_running_loop()
+    for sig in [signal.SIGTERM, signal.SIGINT]:
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
     
-    # Start the bot
-    print("🤖 Starting Telegram Bot...")
-    await app.start()
-    
-    # Get bot info
-    me = await app.get_me()
-    print(f"✅ Bot @{me.username} is now ONLINE!")
-    print("📱 Bot is ready to receive messages...")
-    
-    # Keep running
     try:
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
+        # Start health check server
+        print("🚀 Starting health check server...")
+        health_runner = await start_health_server()
+        
+        # Start the bot
+        print("🤖 Starting Telegram Bot...")
+        await app.start()
+        
+        # Get bot info
+        me = await app.get_me()
+        print(f"✅ Bot @{me.username} is now ONLINE!")
+        print("📱 Bot is ready to receive messages...")
+        
+        # Keep running until shutdown signal
+        while is_running:
+            await asyncio.sleep(1)
+            
+    except asyncio.CancelledError:
+        print("\n🛑 Received cancellation signal...")
+    except Exception as e:
+        print(f"❌ Error: {e}")
     finally:
-        await app.stop()
-        await health_runner.cleanup()
+        print("🔄 Cleaning up resources...")
+        try:
+            await app.stop()
+            await health_runner.cleanup()
+            executor.shutdown(wait=False)
+        except Exception as e:
+            print(f"⚠️ Cleanup warning: {e}")
+        print("✅ Shutdown complete!")
 
 if __name__ == "__main__":
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
