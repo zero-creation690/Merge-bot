@@ -139,7 +139,7 @@ class ProcessingTracker:
         
         stage_text = self.stages[self.current_stage]
         self.current_stage = (self.current_stage + 1) % len(self.stages)
-        dots = "..."[:int(now) % 4]
+        dots = "." * (int(now) % 4)
         
         text = (
             f"⚙️ **PROCESSING VIDEO**\n"
@@ -223,6 +223,7 @@ async def cancel_operation(client: Client, message: Message):
     else:
         await message.reply_text("❌ **No active operation to cancel!**")
 
+# ---------------- FILE HANDLER ----------------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -295,6 +296,7 @@ async def handle_file(client: Client, message: Message):
         if chat_id in user_data:
             del user_data[chat_id]
 
+# ---------------- SUBTITLE HANDLER ----------------
 async def handle_subtitle(client: Client, message: Message):
     chat_id = message.chat.id
     if chat_id not in user_data or "video" not in user_data[chat_id]:
@@ -430,6 +432,7 @@ async def handle_subtitle(client: Client, message: Message):
                     pass
             del user_data[chat_id]
 
+# ---------------- STATS ----------------
 @app.on_message(filters.command("stats"))
 async def stats_command(client: Client, message: Message):
     active_users = len(user_data)
