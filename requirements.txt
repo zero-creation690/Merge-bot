@@ -1,0 +1,4 @@
+pyrogram==2.0.106
+TgCrypto==1.2.5
+aiohttp==3.9.1
+aiofiles==23.2.1
