@@ -5,11 +5,25 @@ import os
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from aiohttp import web
+import threading
 
 # ---------------- CONFIG ----------------
-API_ID = int(os.environ.get("API_ID", "0"))
-API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+# Validate required environment variables
+if not all([API_ID, API_HASH, BOT_TOKEN]):
+    print("❌ ERROR: Missing required environment variables!")
+    print("Please set API_ID, API_HASH, and BOT_TOKEN")
+    exit(1)
+
+try:
+    API_ID = int(API_ID)
+except ValueError:
+    print("❌ ERROR: API_ID must be a valid integer!")
+    exit(1)
 
 app = Client(
     "SubtitleMergeBot",
@@ -24,6 +38,27 @@ app = Client(
 
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=50)
+
+# ---------- Health Check Server for Koyeb ----------
+async def health_check(request):
+    """Simple health check endpoint for Koyeb"""
+    return web.Response(text="OK", status=200)
+
+async def start_health_server():
+    """Start the health check server on port 8080"""
+    health_app = web.Application()
+    health_app.router.add_get('/', health_check)
+    health_app.router.add_get('/health', health_check)
+    health_app.router.add_get('/status', health_check)
+    
+    runner = web.AppRunner(health_app)
+    await runner.setup()
+    
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    
+    print("✅ Health check server running on port 8080")
+    return runner
 
 # ---------- Helpers ----------
 def human_readable(size):
@@ -401,15 +436,32 @@ async def stats_command(client: Client, message: Message):
     )
     await message.reply_text(stats_text)
 
-if __name__ == "__main__":
+async def main():
+    """Main function to start both health server and bot"""
+    # Start health check server
+    health_runner = await start_health_server()
+    
+    # Start the bot
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("🚀 ULTRA FAST SUBTITLE MERGE BOT")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("⚡ Speed: Up to 10+ MB/s")
     print("💪 Workers: 100 threads")
     print("📦 Max Size: 4 GB")
+    print("🌐 Health Check: Port 8080")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("✅ Bot is now ONLINE!")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     
-    app.run()
+    await app.start()
+    
+    # Keep the bot running
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Error: {e}")
