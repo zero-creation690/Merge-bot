@@ -33,16 +33,16 @@ async def health_check(request):
     return web.Response(text="OK", status=200)
 
 async def start_health_server():
-    """Start health check server on port 8080"""
+    """Start health check server on port 8000"""
     app_web = web.Application()
     app_web.router.add_get('/health', health_check)
     app_web.router.add_get('/', health_check)
     
     runner = web.AppRunner(app_web)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
     await site.start()
-    print("🏥 Health check server running on port 8080")
+    print("🏥 Health check server running on port 8000")
     return runner
 
 # ---------- Helpers ----------
@@ -416,13 +416,12 @@ async def handle_subtitle(client: Client, message: Message):
         cmd = [
             'ffmpeg',
             '-i', video_path,
-            '-vf', f"subtitles='{sub_path}'",
+            '-vf', f"subtitles={sub_path}:force_style='FontSize=24'",
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',
+            '-preset', 'medium',
             '-crf', '23',
             '-c:a', 'copy',
             '-threads', '0',
-            '-progress', 'pipe:1',
             '-y',
             output_file
         ]
@@ -440,29 +439,37 @@ async def handle_subtitle(client: Client, message: Message):
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.STDOUT
         )
         
         # Read output line by line for progress updates
         async def read_progress():
-            while True:
-                line = await process.stderr.readline()
-                if not line:
-                    break
-                line_str = line.decode().strip()
-                await ffmpeg_progress.update_from_line(line_str)
+            try:
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                    if line_str:
+                        await ffmpeg_progress.update_from_line(line_str)
+            except Exception as e:
+                print(f"Progress read error: {e}")
         
         # Start reading progress
         progress_task = asyncio.create_task(read_progress())
         
         # Wait for process to complete
         await process.wait()
-        await progress_task
+        
+        try:
+            await asyncio.wait_for(progress_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            pass
         
         merge_time = time.time() - merge_start
         
         if process.returncode != 0:
-            raise Exception("FFmpeg processing failed")
+            raise Exception("FFmpeg processing failed - check video/subtitle compatibility")
         
         if not os.path.exists(output_file):
             raise Exception("Output file was not created")
@@ -566,7 +573,7 @@ if __name__ == "__main__":
     print("💪 Workers: 100 threads")
     print("📦 Max Size: 4 GB")
     print("🔥 FFmpeg Progress: ENABLED")
-    print("🏥 Health Check: Port 8080")
+    print("🏥 Health Check: Port 8000")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("✅ Bot is now ONLINE!")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
