@@ -7,11 +7,19 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
 from aiohttp import web
+import signal
+import sys
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+
+# Validate credentials
+if not API_ID or not API_HASH or not BOT_TOKEN:
+    print("❌ ERROR: Missing environment variables!")
+    print("Please set: API_ID, API_HASH, BOT_TOKEN")
+    sys.exit(1)
 
 app = Client(
     "SubtitleMergeBot",
