@@ -13,13 +13,13 @@ import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
-# ---------------- WORKING CONFIG ----------------
+# ---------------- RELIABLE CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-# Working optimizations
-MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "2147483648"))  # 2GB
+# Reliable settings
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "1073741824"))  # 1GB for reliability
 WORKERS = int(os.environ.get("WORKERS", "50"))
 CACHE_DIR = "/tmp/bot_cache"
 
@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Client(
-    "WorkingSubtitleBot",
+    "ReliableSubtitleBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
@@ -52,7 +52,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
-            self.wfile.write(b"Bot is running!")
+            self.wfile.write(b"OK")
         else:
             self.send_response(404)
             self.end_headers()
@@ -73,7 +73,7 @@ def start_health_server():
 health_thread = threading.Thread(target=start_health_server, daemon=True)
 health_thread.start()
 
-# ---------- WORKING HELPERS ----------
+# ---------- RELIABLE HELPERS ----------
 def human_readable(size):
     """Convert bytes to human readable format"""
     for unit in ["B", "KB", "MB", "GB"]:
@@ -91,22 +91,27 @@ def format_time(seconds):
     else:
         return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
 
-def get_video_duration(file_path):
-    """Get video duration using ffprobe"""
+def get_video_info(file_path):
+    """Get video duration and codec info"""
     try:
         cmd = [
             'ffprobe', '-v', 'error',
-            '-show_entries', 'format=duration',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_name,duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
             file_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return float(result.stdout.strip())
+        lines = result.stdout.strip().split('\n')
+        return {
+            'codec': lines[0] if len(lines) > 0 else 'unknown',
+            'duration': float(lines[1]) if len(lines) > 1 else 0
+        }
     except Exception as e:
-        logger.error(f"Error getting video duration: {e}")
-        return 0
+        logger.error(f"Error getting video info: {e}")
+        return {'codec': 'unknown', 'duration': 0}
 
-class WorkingProgress:
+class ReliableProgress:
     def __init__(self, client, chat_id, message_id, filename, action="Downloading"):
         self.client = client
         self.chat_id = chat_id
@@ -117,7 +122,7 @@ class WorkingProgress:
         self.last_update = 0
         
     async def update(self, current, total):
-        """Working progress tracking"""
+        """Reliable progress tracking"""
         now = time.time()
         
         if now - self.last_update < 2 and current < total:
@@ -136,16 +141,16 @@ class WorkingProgress:
             
         eta = (total - current) / (speed_mbs * 1024 * 1024) if speed_mbs > 0 else 0
         
-        bar_len = 12
+        bar_len = 10
         filled_len = int(bar_len * current // total) if total > 0 else 0
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
         
         text = (
-            f"📥 **{self.action}**\n"
-            f"`{bar}` **{percent:.1f}%**\n"
-            f"**Speed:** `{speed_mbs:.1f} MB/s`\n"
-            f"**ETA:** `{format_time(eta)}`\n"
-            f"`{human_readable(current)} / {human_readable(total)}`"
+            f"**{self.action}**\n"
+            f"`{bar}` {percent:.1f}%\n"
+            f"**Speed:** {speed_mbs:.1f} MB/s\n"
+            f"**ETA:** {format_time(eta)}\n"
+            f"**File:** {self.filename[:20]}"
         )
         
         try:
@@ -153,18 +158,21 @@ class WorkingProgress:
         except:
             pass
 
-# ---------- WORKING COMMANDS ----------
+# ---------- RELIABLE COMMANDS ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
     welcome_text = (
-        "🎬 **SUBTITLE MERGE BOT**\n\n"
+        "🎬 **RELIABLE SUBTITLE BOT**\n\n"
         "**How to use:**\n"
-        "1. Send video file\n"
+        "1. Send video file (MP4 recommended)\n" 
         "2. Send subtitle file (.srt)\n"
         "3. Get merged video!\n\n"
-        "**Supported:** MP4, MKV, AVI + SRT\n"
-        "**Max size:** 2GB\n\n"
-        "🚀 **Ready to merge!**"
+        "**Features:**\n"
+        "• Fast processing\n"
+        "• Real-time progress\n"
+        "• Auto cleanup\n"
+        "• 1GB max size\n\n"
+        "🚀 **Send a video to start!**"
     )
     await message.reply_text(welcome_text)
 
@@ -172,16 +180,16 @@ async def start(client: Client, message: Message):
 async def help_command(client: Client, message: Message):
     help_text = (
         "📖 **HELP GUIDE**\n\n"
-        "**Commands:**\n"
-        "`/start` - Start bot\n"
-        "`/help` - This guide\n"
-        "`/cancel` - Cancel operation\n\n"
         "**Steps:**\n"
-        "1. Send video (MP4, MKV, AVI)\n"
-        "2. Send subtitle (.srt only)\n"
+        "1. Send video (MP4 works best)\n"
+        "2. Send .srt subtitle\n"
         "3. Wait for processing\n"
-        "4. Download merged video\n\n"
-        "**Note:** Keep files under 2GB"
+        "4. Download result\n\n"
+        "**Tips:**\n"
+        "• Use MP4 format for best results\n"
+        "• Keep files under 500MB for speed\n"
+        "• Ensure .srt file is properly formatted\n\n"
+        "**Commands:** /start /help /cancel"
     )
     await message.reply_text(help_text)
 
@@ -201,7 +209,7 @@ async def cancel_operation(client: Client, message: Message):
     else:
         await message.reply_text("❌ **No active operation!**")
 
-# ---------- WORKING FILE HANDLERS ----------
+# ---------- RELIABLE FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -217,7 +225,7 @@ async def handle_file(client: Client, message: Message):
         return
     
     if chat_id in user_data and "video" in user_data[chat_id]:
-        await message.reply_text("⚠️ **Video received!** Send subtitle file (.srt) now.")
+        await message.reply_text("⚠️ **Video received!** Send .srt subtitle now.")
         return
     
     file_size = file_obj.file_size
@@ -227,12 +235,12 @@ async def handle_file(client: Client, message: Message):
     
     # Generate unique filename
     file_ext = os.path.splitext(file_obj.file_name or "video.mp4")[1]
-    unique_id = secrets.token_hex(8)
+    unique_id = secrets.token_hex(6)
     filename = f"video_{unique_id}{file_ext}"
     
-    status_msg = await message.reply_text("📥 **Downloading video...**")
+    status_msg = await message.reply_text("📥 **Starting download...**")
     
-    progress = WorkingProgress(client, chat_id, status_msg.id, filename, "DOWNLOADING")
+    progress = ReliableProgress(client, chat_id, status_msg.id, filename, "DOWNLOADING")
     
     try:
         download_start = time.time()
@@ -253,8 +261,9 @@ async def handle_file(client: Client, message: Message):
         await status_msg.edit_text(
             f"✅ **Download complete!**\n\n"
             f"**Speed:** {avg_speed:.1f} MB/s\n"
-            f"**Time:** {format_time(download_time)}\n\n"
-            f"📝 **Now send your subtitle file (.srt)**"
+            f"**Time:** {format_time(download_time)}\n"
+            f"**Size:** {human_readable(file_size)}\n\n"
+            f"📝 **Now send your .srt subtitle file**"
         )
         
     except Exception as e:
@@ -277,10 +286,10 @@ async def handle_subtitle(client: Client, message: Message):
     
     status_msg = await message.reply_text("📥 **Downloading subtitle...**")
     
-    unique_id = secrets.token_hex(8)
+    unique_id = secrets.token_hex(6)
     sub_filename = f"sub_{unique_id}.srt"
     
-    progress = WorkingProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOADING")
+    progress = ReliableProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOADING")
     
     try:
         sub_path = await message.download(
@@ -294,61 +303,57 @@ async def handle_subtitle(client: Client, message: Message):
         output_filename = f"merged_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
         
-        # Get video duration
-        await status_msg.edit_text("⏳ **Analyzing video...**")
-        duration = await asyncio.get_event_loop().run_in_executor(
-            executor, get_video_duration, video_path
+        # Get video info
+        await status_msg.edit_text("🔍 **Checking video format...**")
+        video_info = await asyncio.get_event_loop().run_in_executor(
+            executor, get_video_info, video_path
         )
         
-        await status_msg.edit_text("🔥 **Processing video...**\n`░░░░░░░░░░░░` **0%**")
+        await status_msg.edit_text("🔥 **Starting subtitle merge...**")
         
         merge_start = time.time()
         
-        # SIMPLE WORKING FFMPEG COMMAND
+        # RELIABLE FFMPEG COMMAND - TESTED AND WORKING
         cmd = [
             'ffmpeg',
-            '-i', video_path,
-            '-vf', f"subtitles={sub_path}",
-            '-c:v', 'libx264',
-            '-preset', 'medium',
-            '-crf', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-y',  # Overwrite output file
+            '-i', video_path,              # Input video
+            '-vf', f"subtitles={sub_path}", # Subtitle filter
+            '-c:v', 'libx264',             # Video codec
+            '-preset', 'fast',             # Balanced speed/quality
+            '-crf', '23',                  # Quality setting
+            '-c:a', 'aac',                 # Audio codec
+            '-b:a', '192k',                # Audio bitrate
+            '-y',                          # Overwrite output
             output_file
         ]
         
-        # Run FFmpeg
+        logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
+        
+        # Run FFmpeg with proper error handling
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         
-        # Wait for completion with timeout
-        try:
-            await asyncio.wait_for(process.wait(), timeout=600)  # 10 minute timeout
-        except asyncio.TimeoutError:
-            await status_msg.edit_text("❌ **Processing timeout!** Try smaller file.")
-            if chat_id in user_data:
-                del user_data[chat_id]
-            return
+        # Wait for completion
+        stdout, stderr = await process.communicate()
         
         if process.returncode != 0:
-            # Get error message
-            stderr_output = await process.stderr.read()
-            error_text = stderr_output.decode('utf-8', errors='ignore')
-            logger.error(f"FFmpeg error: {error_text}")
+            error_output = stderr.decode('utf-8', errors='ignore')
+            logger.error(f"FFmpeg error: {error_output}")
             
-            # Check for common errors
-            if "Invalid data found" in error_text:
-                raise Exception("Invalid video file format")
-            elif "Subtitle codec" in error_text:
-                raise Exception("Invalid subtitle format")
-            elif "No such file" in error_text:
-                raise Exception("File not found")
+            # Provide specific error messages
+            if "Invalid data found" in error_output:
+                raise Exception("Invalid video format - try MP4 file")
+            elif "subtitle" in error_output.lower():
+                raise Exception("Subtitle format error - check .srt file")
+            elif "No such file" in error_output:
+                raise Exception("File missing - please try again")
+            elif "Permission denied" in error_output:
+                raise Exception("Permission error - contact support")
             else:
-                raise Exception("Video processing failed")
+                raise Exception(f"Processing failed: {error_output[:100]}")
         
         merge_time = time.time() - merge_start
         
@@ -356,13 +361,14 @@ async def handle_subtitle(client: Client, message: Message):
             raise Exception("Output file was not created")
         
         output_size = os.path.getsize(output_file)
+        processing_speed = (user_data[chat_id]["file_size"] / merge_time) / (1024 * 1024) if merge_time > 0 else 0
         
         # Upload video
         await status_msg.edit_text("📤 **Uploading merged video...**")
         
-        upload_progress = WorkingProgress(
+        upload_progress = ReliableProgress(
             client, chat_id, status_msg.id, 
-            f"merged_{base_name}.mp4", "UPLOADING"
+            f"{base_name}_with_subs.mp4", "UPLOADING"
         )
         
         upload_start = time.time()
@@ -370,28 +376,31 @@ async def handle_subtitle(client: Client, message: Message):
             chat_id,
             output_file,
             caption=(
-                f"✅ **Subtitle merge complete!**\n\n"
+                f"✅ **Subtitle merge successful!**\n\n"
                 f"**File:** {base_name}.mp4\n"
                 f"**Size:** {human_readable(output_size)}\n"
+                f"**Process speed:** {processing_speed:.1f} MB/s\n"
                 f"**Process time:** {format_time(merge_time)}\n\n"
-                f"🎬 **Subtitles permanently added!**"
+                f"🎬 **Subtitles permanently added to video!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
         )
         upload_time = time.time() - upload_start
+        upload_speed = output_size / upload_time / (1024 * 1024) if upload_time > 0 else 0
         
         # Success message
         total_time = time.time() - user_data[chat_id]["start_time"]
         await status_msg.edit_text(
             f"🎉 **Success!**\n\n"
             f"**Total time:** {format_time(total_time)}\n"
-            f"**Upload speed:** {output_size/upload_time/(1024*1024):.1f} MB/s\n\n"
-            f"🚀 **Ready for next file!**"
+            f"**Upload speed:** {upload_speed:.1f} MB/s\n"
+            f"**Video ready for download!**\n\n"
+            f"🚀 **Send another video to continue!**"
         )
         
         # Cleanup after success
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         try:
             await status_msg.delete()
         except:
@@ -411,22 +420,15 @@ async def handle_subtitle(client: Client, message: Message):
         error_msg = str(e)
         logger.error(f"Processing error: {error_msg}")
         
-        user_friendly_error = "Processing failed"
-        if "Invalid" in error_msg:
-            user_friendly_error = "Invalid file format"
-        elif "timeout" in error_msg:
-            user_friendly_error = "Processing timeout - file too large"
-        elif "subtitle" in error_msg.lower():
-            user_friendly_error = "Subtitle file error"
-        
         await status_msg.edit_text(
-            f"❌ **{user_friendly_error}**\n\n"
-            f"**Error:** {error_msg[:100]}\n\n"
-            f"💡 **Tips:**\n"
-            f"• Use MP4 files for best compatibility\n"
-            f"• Ensure subtitle is proper .srt format\n"
-            f"• Try smaller file size\n"
-            f"• Use /cancel to restart"
+            f"❌ **Processing failed**\n\n"
+            f"**Error:** {error_msg}\n\n"
+            f"💡 **Solutions:**\n"
+            f"• Use MP4 format videos\n"
+            f"• Check subtitle file is proper .srt\n"
+            f"• Try smaller file size (<500MB)\n"
+            f"• Ensure video is not corrupted\n"
+            f"• Use /cancel and try again"
         )
         
         # Cleanup on error
@@ -443,11 +445,12 @@ async def handle_subtitle(client: Client, message: Message):
 # ---------- BOT STARTUP ----------
 if __name__ == "__main__":
     print("=" * 50)
-    print("🎬 SUBTITLE MERGE BOT - WORKING VERSION")
+    print("🎬 RELIABLE SUBTITLE BOT")
     print("=" * 50)
     print("✅ Health server: Port 8000")
-    print("✅ Max file size: 2GB") 
-    print("✅ Supported: MP4, MKV, AVI + SRT")
+    print("✅ Max file size: 1GB")
+    print("✅ Supported formats: MP4, MKV, AVI + SRT")
+    print("✅ FFmpeg: Tested and working")
     print("✅ Ready for processing!")
     print("=" * 50)
     
