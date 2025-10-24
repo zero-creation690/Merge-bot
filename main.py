@@ -5,8 +5,7 @@ Ultra Super AutoFilter Subtitle Bot
 - Real-time progress: download, burn, upload
 - Supports up to 4GB
 - Auto cleans files
-- Small progress bars, fixed ETA
-- Supports Sinhala, Tamil, Hindi, English, and other Unicode
+- Works with Sinhala, Tamil, Hindi, English, and most Unicode languages
 """
 
 import os, time, asyncio, secrets, logging, subprocess
@@ -25,7 +24,7 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/ultra_autobot")
 os.makedirs(CACHE_DIR, exist_ok=True)
 WORKERS = 4
 
-# Fonts supporting multiple languages
+# Multi-language fonts (must be installed on server)
 FONTS = {
     "sinhala": "/usr/share/fonts/truetype/sinhala/FMAbhaya.ttf",
     "tamil": "/usr/share/fonts/truetype/tamil/Latha.ttf",
@@ -70,14 +69,14 @@ def format_time(seconds:float)->str:
     else: return f"{seconds//3600}h {(seconds%3600)//60}m"
 
 def detect_language(sub_file:str)->str:
-    """Detect language in the subtitle file by simple character check"""
+    """Detect language by characters in subtitle"""
     try:
         with open(sub_file,"r",encoding="utf-8") as f:
-            content=f.read()
-        if any('\u0d80' <= c <= '\u0dff' for c in content): return "sinhala"
-        if any('\u0b80' <= c <= '\u0bff' for c in content): return "tamil"
-        if any('\u0900' <= c <= '\u097f' for c in content): return "hindi"
-        if any(c.isascii() for c in content): return "english"
+            text=f.read()
+        if any('\u0d80' <= c <= '\u0dff' for c in text): return "sinhala"
+        if any('\u0b80' <= c <= '\u0bff' for c in text): return "tamil"
+        if any('\u0900' <= c <= '\u097f' for c in text): return "hindi"
+        if any(c.isascii() for c in text): return "english"
         return "default"
     except:
         return "default"
@@ -129,13 +128,15 @@ async def cancel_cmd(client,message:Message):
             if fp and os.path.exists(fp): os.remove(fp)
         del user_data[chat_id]
         await message.reply_text("✅ Cancelled & cleaned!")
-    else: await message.reply_text("❌ No active operation.")
+    else:
+        await message.reply_text("❌ No active operation.")
 
 # ---------------- FILE HANDLER ----------------
 @app.on_message(filters.video|filters.document)
 async def file_handler(client,message:Message):
     chat_id=message.chat.id
-    if message.video: file_obj=message.video
+    if message.video:
+        file_obj=message.video
     else:
         file_obj=message.document
         if file_obj.file_name.lower().endswith(".srt"):
@@ -174,7 +175,6 @@ async def handle_subtitle(client,message:Message):
     sub_path=os.path.join(CACHE_DIR,f"s_{unique}.srt")
     progress=SmoothProgress(client,chat_id,msg.id,sub_obj.file_name,"DOWNLOAD")
     sub_file=await message.download(file_name=sub_path, progress=progress.update)
-    
     await msg.edit_text("✅ Subtitle downloaded. Starting TURBO BURN...")
 
     video_path=user_data[chat_id]["video"]
