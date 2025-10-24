@@ -8,6 +8,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
 from aiohttp import web
+import threading
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -29,22 +30,29 @@ user_data = {}
 executor = ThreadPoolExecutor(max_workers=50)
 
 # ---------- Health Check Server ----------
-async def health_check(request):
-    """Health check endpoint for Koyeb"""
-    return web.Response(text="OK", status=200)
-
-async def start_health_server():
-    """Start health check server on port 8000"""
-    app_web = web.Application()
-    app_web.router.add_get('/health', health_check)
-    app_web.router.add_get('/', health_check)
+def run_health_server():
+    """Run health check server in separate thread"""
+    async def health_check(request):
+        return web.Response(text="OK", status=200)
     
-    runner = web.AppRunner(app_web)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8000)
-    await site.start()
-    print("🏥 Health check server running on port 8000")
-    return runner
+    async def start_server():
+        app_web = web.Application()
+        app_web.router.add_get('/health', health_check)
+        app_web.router.add_get('/', health_check)
+        
+        runner = web.AppRunner(app_web)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', 8000)
+        await site.start()
+        print("🏥 Health check server running on port 8000")
+        
+        # Keep server running
+        while True:
+            await asyncio.sleep(3600)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_server())
 
 # ---------- Helpers ----------
 def human_readable(size):
@@ -164,11 +172,9 @@ class FFmpegProgressTracker:
         """Parse FFmpeg output and update progress"""
         now = time.time()
         
-        # Update every 2 seconds
         if now - self.last_update < 2:
             return
         
-        # Parse time from FFmpeg output (format: time=00:01:23.45)
         time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
         if not time_match:
             return
@@ -186,19 +192,16 @@ class FFmpegProgressTracker:
         
         elapsed = now - self.start_time
         
-        # Calculate ETA
         if current_time > 0:
             rate = current_time / elapsed
             remaining_time = (self.duration - current_time) / rate if rate > 0 else 0
         else:
             remaining_time = 0
         
-        # Create progress bar
         bar_len = 22
         filled_len = int(bar_len * percent / 100)
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
         
-        # Parse speed from FFmpeg output
         speed_match = re.search(r'speed=\s*([\d.]+)x', line)
         speed_text = f"{speed_match.group(1)}x" if speed_match else "1.0x"
         
@@ -285,6 +288,35 @@ async def cancel_operation(client: Client, message: Message):
         await message.reply_text("✅ **Operation cancelled!** All files removed.")
     else:
         await message.reply_text("❌ **No active operation to cancel!**")
+
+@app.on_message(filters.command("ping"))
+async def ping_command(client: Client, message: Message):
+    start = time.time()
+    sent_msg = await message.reply_text("🏓 Pinging...")
+    end = time.time()
+    await sent_msg.edit_text(
+        f"🏓 **Pong!**\n\n"
+        f"⚡ **Response Time:** `{(end - start) * 1000:.2f}ms`\n"
+        f"🤖 **Bot Status:** Online ✅\n"
+        f"🏥 **Health Check:** Port 8000 ✅"
+    )
+
+@app.on_message(filters.command("stats"))
+async def stats_command(client: Client, message: Message):
+    active_users = len(user_data)
+    uptime = time.time() - app.start_time if hasattr(app, 'start_time') else 0
+    stats_text = (
+        f"📊 **BOT STATISTICS**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 **Active Users:** `{active_users}`\n"
+        f"⚡ **Max Speed:** `10+ MB/s`\n"
+        f"🔄 **Workers:** `100 threads`\n"
+        f"📦 **Max File Size:** `4 GB`\n"
+        f"⏱️ **Uptime:** `{format_time(uptime)}`\n"
+        f"🏥 **Health:** `Healthy ✅`\n\n"
+        f"🚀 **Ultra Fast Engine: ONLINE**"
+    )
+    await message.reply_text(stats_text)
 
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
@@ -397,7 +429,6 @@ async def handle_subtitle(client: Client, message: Message):
         base_name = os.path.splitext(original_filename)[0]
         output_file = f"merged_{chat_id}_{base_name}.mp4"
         
-        # Get video duration for progress tracking
         await status_msg.edit_text(
             "🔍 **ANALYZING VIDEO**\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -415,7 +446,6 @@ async def handle_subtitle(client: Client, message: Message):
         
         merge_start = time.time()
         
-        # FFmpeg command with progress output
         cmd = [
             'ffmpeg',
             '-i', video_path,
@@ -429,7 +459,6 @@ async def handle_subtitle(client: Client, message: Message):
             output_file
         ]
         
-        # Create progress tracker
         ffmpeg_progress = FFmpegProgressTracker(
             client,
             chat_id,
@@ -438,14 +467,12 @@ async def handle_subtitle(client: Client, message: Message):
             duration
         )
         
-        # Run FFmpeg with real-time progress
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT
         )
         
-        # Read output line by line for progress updates
         async def read_progress():
             try:
                 while True:
@@ -458,10 +485,8 @@ async def handle_subtitle(client: Client, message: Message):
             except Exception as e:
                 print(f"Progress read error: {e}")
         
-        # Start reading progress
         progress_task = asyncio.create_task(read_progress())
         
-        # Wait for process to complete
         await process.wait()
         
         try:
@@ -479,12 +504,10 @@ async def handle_subtitle(client: Client, message: Message):
         
         output_size = os.path.getsize(output_file)
         
-        # Upload merged video with ultra-fast progress
         await status_msg.edit_text(
             "📤 **UPLOADING VIDEO**\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🚀 Starting ultra-fast upload...\n"
-            "⚡ Maximum speed mode activated"
+            "🚀 Starting ultra-fast upload..."
         )
         
         upload_progress = UltraFastProgressTracker(
@@ -513,7 +536,6 @@ async def handle_subtitle(client: Client, message: Message):
         upload_time = time.time() - upload_start
         upload_speed = output_size / upload_time if upload_time > 0 else 0
         
-        # Send completion message
         await status_msg.edit_text(
             f"🎉 **MISSION COMPLETE!**\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -523,7 +545,6 @@ async def handle_subtitle(client: Client, message: Message):
             f"💡 Send another video to merge more!"
         )
         
-        # Cleanup
         await asyncio.sleep(2)
         await status_msg.delete()
         
@@ -544,7 +565,6 @@ async def handle_subtitle(client: Client, message: Message):
             f"💡 Try again or use /cancel to start over"
         )
         
-        # Cleanup on error
         if chat_id in user_data:
             video_path = user_data[chat_id].get("video")
             if video_path and os.path.exists(video_path):
@@ -553,70 +573,6 @@ async def handle_subtitle(client: Client, message: Message):
                 except:
                     pass
             del user_data[chat_id]
-
-@app.on_message(filters.command("stats"))
-async def stats_command(client: Client, message: Message):
-    active_users = len(user_data)
-    uptime = time.time() - app.start_time if hasattr(app, 'start_time') else 0
-    stats_text = (
-        f"📊 **BOT STATISTICS**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 **Active Users:** `{active_users}`\n"
-        f"⚡ **Max Speed:** `10+ MB/s`\n"
-        f"🔄 **Workers:** `100 threads`\n"
-        f"📦 **Max File Size:** `4 GB`\n"
-        f"⏱️ **Uptime:** `{format_time(uptime)}`\n"
-        f"🏥 **Health:** `Healthy ✅`\n\n"
-        f"🚀 **Ultra Fast Engine: ONLINE**"
-    )
-    await message.reply_text(stats_text)
-
-@app.on_message(filters.command("ping"))
-async def ping_command(client: Client, message: Message):
-    start = time.time()
-    sent_msg = await message.reply_text("🏓 Pinging...")
-    end = time.time()
-    await sent_msg.edit_text(
-        f"🏓 **Pong!**\n\n"
-        f"⚡ **Response Time:** `{(end - start) * 1000:.2f}ms`\n"
-        f"🤖 **Bot Status:** Online ✅\n"
-        f"🏥 **Health Check:** Port 8000 ✅"
-    )
-
-async def main():
-    """Main function to run bot and health server concurrently"""
-    # Start health check server
-    await start_health_server()
-    
-    # Set start time for uptime tracking
-    app.start_time = time.time()
-    
-    # Start the bot with retry logic
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            await app.start()
-            print("✅ Bot successfully connected to Telegram!")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-            break
-        except FloodWait as e:
-            retry_count += 1
-            wait_time = min(e.value, 60)  # Wait max 60 seconds
-            print(f"⏳ Flood wait detected. Waiting {wait_time} seconds... (Attempt {retry_count}/{max_retries})")
-            await asyncio.sleep(wait_time)
-        except Exception as e:
-            print(f"❌ Connection error: {e}")
-            retry_count += 1
-            if retry_count < max_retries:
-                print(f"🔄 Retrying... (Attempt {retry_count}/{max_retries})")
-                await asyncio.sleep(5)
-            else:
-                raise
-    
-    # Keep running
-    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -629,11 +585,23 @@ if __name__ == "__main__":
     print("🏥 Health Check: Port 8000")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
+    # Start health server in background thread
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    
+    # Give health server time to start
+    time.sleep(2)
+    
+    # Set start time
+    app.start_time = time.time()
+    
+    print("✅ Bot starting...")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    
+    # Run bot (handles FloodWait automatically)
     try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 Bot stopped!")
+        app.run()
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
     except Exception as e:
         print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
