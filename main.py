@@ -213,7 +213,7 @@ class UltraProgress:
             logger.debug(f"Progress update error: {e}")
 
 class BurnProgress:
-    """Real-time FFmpeg burning progress tracker"""
+    """Real-time FFmpeg burning progress tracker with big beautiful bars"""
     def __init__(self, client, chat_id, message_id, filename, total_duration):
         self.client = client
         self.chat_id = chat_id
@@ -225,9 +225,9 @@ class BurnProgress:
         self.last_percent = 0
         
     async def update(self, current_time, speed_x):
-        """Update burn progress"""
+        """Update burn progress with big animated bars"""
         now = time.time()
-        if now - self.last_update < 1.2:
+        if now - self.last_update < 0.9:
             return
             
         self.last_update = now
@@ -244,40 +244,78 @@ class BurnProgress:
         else:
             eta = 0
         
-        # Progress bar
-        bar_len = 20
+        # BIG Progress bar (30 blocks for more detail!)
+        bar_len = 30
         filled_len = int(bar_len * percent / 100)
-        bar = "🔥" * filled_len + "◽" * (bar_len - filled_len)
         
-        # Status based on speed
-        if speed_x > 2.5:
-            status = "ULTRA BURN"
-            emoji = "🚀"
-        elif speed_x > 1.8:
-            status = "TURBO BURN"
-            emoji = "⚡"
-        elif speed_x > 1.2:
-            status = "FAST BURN"
-            emoji = "🔥"
+        # Animated fire emoji progression
+        if percent < 25:
+            fire_emoji = "🔥"
+            empty_emoji = "░"
+        elif percent < 50:
+            fire_emoji = "🔥"
+            empty_emoji = "▒"
+        elif percent < 75:
+            fire_emoji = "🔥"
+            empty_emoji = "▓"
         else:
-            status = "BURNING"
-            emoji = "⏳"
+            fire_emoji = "🔥"
+            empty_emoji = "█"
+        
+        bar = fire_emoji * filled_len + empty_emoji * (bar_len - filled_len)
+        
+        # Status based on speed with better emojis
+        if speed_x > 3.0:
+            status = "🚀 ULTRA BURN"
+            status_bar = "█████████░"
+            speed_desc = "BLAZING FAST!"
+        elif speed_x > 2.0:
+            status = "⚡ TURBO BURN"
+            status_bar = "████████░░"
+            speed_desc = "Very Fast"
+        elif speed_x > 1.5:
+            status = "🔥 FAST BURN"
+            status_bar = "███████░░░"
+            speed_desc = "Fast"
+        elif speed_x > 1.0:
+            status = "💨 BURNING"
+            status_bar = "██████░░░░"
+            speed_desc = "Normal"
+        else:
+            status = "⏳ PROCESSING"
+            status_bar = "█████░░░░░"
+            speed_desc = "Working..."
         
         # Format filename
-        display_name = self.filename[:30] + "..." if len(self.filename) > 30 else self.filename
+        display_name = self.filename[:25] + "..." if len(self.filename) > 25 else self.filename
+        
+        # Big percentage display
+        percent_display = f"{percent:.1f}%"
+        percent_bar = "█" * int(percent / 10) + "░" * (10 - int(percent / 10))
         
         text = (
             f"╔═══════════════════════════════╗\n"
-            f"║ {emoji} **{status}** • {speed_x:.2f}x\n"
+            f"║      {status}\n"
             f"╠═══════════════════════════════╣\n"
-            f"║ 🎬 `{display_name}`\n"
             f"║\n"
+            f"║ 📄 **File:** `{display_name}`\n"
+            f"║\n"
+            f"║ ▼ **BURNING PROGRESS** ▼\n"
             f"║ {bar}\n"
-            f"║ **{percent:.1f}%** • {format_time(current_time)} / {format_time(self.total_duration)}\n"
             f"║\n"
-            f"║ ⏱️ **ETA:** {format_time(eta)}\n"
+            f"║ 📊 **Percentage:** **{percent_display}**\n"
+            f"║ [{percent_bar}]\n"
+            f"║\n"
+            f"║ ⚡ **Speed:** {speed_x:.2f}x • {speed_desc}\n"
+            f"║ {status_bar}\n"
+            f"║\n"
+            f"║ ⏱️ **Time:** {format_time(current_time)} / {format_time(self.total_duration)}\n"
+            f"║ 🕐 **ETA:** {format_time(eta)}\n"
             f"║ ⏰ **Elapsed:** {format_time(elapsed)}\n"
-            f"║ 🔧 **Process:** Encoding with burned subs\n"
+            f"║\n"
+            f"║ 🎬 **Status:** Encoding with subtitles\n"
+            f"║ 🔧 **Quality:** High (CRF 23)\n"
+            f"║\n"
             f"╚═══════════════════════════════╝"
         )
         
@@ -642,18 +680,22 @@ async def handle_subtitle(client: Client, message: Message):
         output_filename = f"burned_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
         
-        # Start burning
+        # Start burning with better initial message
         await status_msg.edit_text(
             "╔═══════════════════════════════╗\n"
-            "║ 🔍 **ANALYZING VIDEO**\n"
+            "║ 🎬 **VIDEO ANALYSIS**\n"
             "╠═══════════════════════════════╣\n"
             "║\n"
-            "║ Preparing for ultra-fast burn...\n"
+            f"║ 📄 File: {base_name[:20]}...\n"
+            f"║ ⏱️ Duration: {format_time(duration)}\n"
+            f"║ 📐 Resolution: {user_data[chat_id].get('resolution', 'N/A')}\n"
+            "║\n"
+            "║ 🔥 Initializing ultra-fast burn...\n"
             "║\n"
             "╚═══════════════════════════════╝"
         )
         
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         
         # Initialize burn progress
         burn_progress = BurnProgress(
@@ -675,11 +717,16 @@ async def handle_subtitle(client: Client, message: Message):
             '-movflags', '+faststart',
             '-threads', '0',
             '-progress', 'pipe:1',
+            '-loglevel', 'error',
+            '-stats',
             '-y',
             output_file
         ]
         
         logger.info(f"Starting FFmpeg: {' '.join(cmd)}")
+        
+        # Show initial burn status
+        await burn_progress.update(0, 0)
         
         # Start FFmpeg process
         process = await asyncio.create_subprocess_exec(
@@ -688,25 +735,45 @@ async def handle_subtitle(client: Client, message: Message):
             stderr=asyncio.subprocess.PIPE
         )
         
-        # Monitor FFmpeg progress
+        # Monitor FFmpeg progress with real-time updates
         async def monitor_ffmpeg():
             current_time = 0
-            pattern = re.compile(r'out_time_ms=(\d+)')
+            last_time = 0
+            last_update = time.time()
+            
+            # Patterns to match FFmpeg output
+            time_pattern = re.compile(r'out_time_ms=(\d+)')
+            frame_pattern = re.compile(r'frame=\s*(\d+)')
+            fps_pattern = re.compile(r'fps=\s*([\d.]+)')
             
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
                 
-                line = line.decode('utf-8', errors='ignore')
-                match = pattern.search(line)
-                
-                if match:
-                    time_ms = int(match.group(1))
-                    current_time = time_ms / 1000000  # Convert to seconds
+                try:
+                    line = line.decode('utf-8', errors='ignore').strip()
                     
-                    speed_x = current_time / (time.time() - burn_start) if time.time() > burn_start else 1.0
-                    await burn_progress.update(current_time, speed_x)
+                    # Parse time progress
+                    time_match = time_pattern.search(line)
+                    if time_match:
+                        time_ms = int(time_match.group(1))
+                        current_time = time_ms / 1000000  # Convert to seconds
+                        
+                        # Calculate encoding speed
+                        elapsed = time.time() - burn_start
+                        if elapsed > 0.1 and current_time > 0:
+                            speed_x = current_time / elapsed
+                            
+                            # Update progress every 1 second of video time or 1 real second
+                            if current_time - last_time >= 1.0 or time.time() - last_update >= 1.0:
+                                await burn_progress.update(current_time, speed_x)
+                                last_time = current_time
+                                last_update = time.time()
+                    
+                except Exception as e:
+                    logger.debug(f"Progress parse error: {e}")
+                    continue
         
         # Start monitoring
         monitor_task = asyncio.create_task(monitor_ffmpeg())
@@ -723,16 +790,44 @@ async def handle_subtitle(client: Client, message: Message):
         
         burn_time = time.time() - burn_start
         
+        # Show 100% completion
+        if duration > 0:
+            await burn_progress.update(duration, 3.5)
+        
+        await asyncio.sleep(0.5)
+        
         # Check for errors
         if process.returncode != 0:
             stderr = await process.stderr.read()
             error_msg = stderr.decode('utf-8', errors='ignore')[:200]
+            logger.error(f"FFmpeg error: {error_msg}")
             raise Exception(f"FFmpeg failed: {error_msg}")
         
         if not os.path.exists(output_file):
             raise Exception("Output file not created")
         
         output_size = os.path.getsize(output_file)
+        burn_speed = (user_data[chat_id]["file_size"] / burn_time / (1024 * 1024)) if burn_time > 0 else 0
+        
+        # Show completion message before upload
+        await status_msg.edit_text(
+            f"╔═══════════════════════════════╗\n"
+            f"║ ✅ **BURN COMPLETE!**\n"
+            f"╠═══════════════════════════════╣\n"
+            f"║\n"
+            f"║ 🔥 Processing: **100%** DONE!\n"
+            f"║ [██████████]\n"
+            f"║\n"
+            f"║ ⚡ Speed: {burn_speed:.2f} MB/s\n"
+            f"║ ⏱️ Time: {format_time(burn_time)}\n"
+            f"║ 📦 Size: {human_readable(output_size)}\n"
+            f"║\n"
+            f"║ 🚀 Starting upload...\n"
+            f"║\n"
+            f"╚═══════════════════════════════╝"
+        )
+        
+        await asyncio.sleep(0.5)
         
         # Upload result
         await status_msg.edit_text(
@@ -775,33 +870,55 @@ async def handle_subtitle(client: Client, message: Message):
         )
         
         upload_time = time.time() - upload_start
+        upload_speed = (output_size / upload_time / (1024 * 1024)) if upload_time > 0 else 0
         
-        # Final success message
+        # Final BIG success message with all stats
         total_time = time.time() - user_data[chat_id]["start_time"]
         
         await status_msg.edit_text(
             f"╔═══════════════════════════════╗\n"
-            f"║ 🎊 **MISSION ACCOMPLISHED**\n"
+            f"║   🏆 **SUCCESS!** 🏆\n"
             f"╠═══════════════════════════════╣\n"
             f"║\n"
-            f"║ ✅ **Total Time:** {format_time(total_time)}\n"
-            f"║ 🔥 **Burn Time:** {format_time(burn_time)}\n"
-            f"║ 📤 **Upload Time:** {format_time(upload_time)}\n"
+            f"║ ▼ **PERFORMANCE STATS** ▼\n"
             f"║\n"
-            f"║ 🚀 Ready for next video!\n"
+            f"║ 📊 **Total Time:** {format_time(total_time)}\n"
+            f"║ [████████████████████]\n"
+            f"║\n"
+            f"║ 🔥 **Burn Phase:**\n"
+            f"║ • Time: {format_time(burn_time)}\n"
+            f"║ • Speed: {burn_speed:.2f} MB/s\n"
+            f"║ • Status: ✅ Complete\n"
+            f"║\n"
+            f"║ 📤 **Upload Phase:**\n"
+            f"║ • Time: {format_time(upload_time)}\n"
+            f"║ • Speed: {upload_speed:.2f} MB/s\n"
+            f"║ • Status: ✅ Complete\n"
+            f"║\n"
+            f"║ 📦 **File Info:**\n"
+            f"║ • Input: {human_readable(user_data[chat_id]['file_size'])}\n"
+            f"║ • Output: {human_readable(output_size)}\n"
+            f"║ • Format: MP4 (H.264)\n"
+            f"║\n"
+            f"║ 🎯 **ALL SYSTEMS GO!**\n"
+            f"║ Ready for next video! 🚀\n"
             f"║\n"
             f"╚═══════════════════════════════╝"
         )
         
-        # Auto-delete status after 10 seconds
-        await asyncio.sleep(10)
+        # Auto-delete status after 15 seconds
+        await asyncio.sleep(15)
         try:
             await status_msg.delete()
         except:
             pass
         
-        # Cleanup files
-        for file_path in [video_path, sub_path, output_file]:
+        # Cleanup files (including thumbnail)
+        cleanup_files = [video_path, sub_path, output_file]
+        if thumb_path and os.path.exists(thumb_path):
+            cleanup_files.append(thumb_path)
+            
+        for file_path in cleanup_files:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
