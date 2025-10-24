@@ -8,8 +8,6 @@ import logging
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 import re
-import psutil
-from datetime import datetime
 import secrets
 
 # ---------------- CONFIG ----------------
@@ -78,20 +76,50 @@ def get_video_duration(file_path):
         return 0
 
 def get_system_stats():
-    """Get system statistics for Koyeb"""
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/tmp')
-    
-    return {
-        'cpu': cpu_percent,
-        'memory_used': memory.used,
-        'memory_total': memory.total,
-        'memory_percent': memory.percent,
-        'disk_used': disk.used,
-        'disk_total': disk.total,
-        'disk_percent': disk.percent
-    }
+    """Get system statistics without psutil"""
+    try:
+        # Get memory info from /proc/meminfo
+        with open('/proc/meminfo', 'r') as f:
+            mem_lines = f.readlines()
+        
+        mem_total = 0
+        mem_available = 0
+        
+        for line in mem_lines:
+            if line.startswith('MemTotal:'):
+                mem_total = int(line.split()[1]) * 1024  # Convert kB to bytes
+            elif line.startswith('MemAvailable:'):
+                mem_available = int(line.split()[1]) * 1024
+        
+        memory_used = mem_total - mem_available
+        memory_percent = (memory_used / mem_total) * 100 if mem_total > 0 else 0
+        
+        # Get disk usage
+        disk_stats = os.statvfs('/tmp')
+        disk_total = disk_stats.f_blocks * disk_stats.f_frsize
+        disk_used = (disk_stats.f_blocks - disk_stats.f_bfree) * disk_stats.f_frsize
+        disk_percent = (disk_used / disk_total) * 100 if disk_total > 0 else 0
+        
+        return {
+            'cpu': 0,  # Can't get CPU without psutil
+            'memory_used': memory_used,
+            'memory_total': mem_total,
+            'memory_percent': memory_percent,
+            'disk_used': disk_used,
+            'disk_total': disk_total,
+            'disk_percent': disk_percent
+        }
+    except Exception as e:
+        logger.error(f"Error getting system stats: {e}")
+        return {
+            'cpu': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'memory_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'disk_percent': 0
+        }
 
 class TurboProgressTracker:
     def __init__(self, client, chat_id, message_id, filename, action="Downloading"):
@@ -340,9 +368,8 @@ async def speed_test(client: Client, message: Message):
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"💾 **Write Speed:** `{human_readable(write_speed)}/s`\n"
             f"📖 **Read Speed:** `{human_readable(read_speed)}/s`\n"
-            f"🖥️ **CPU Usage:** `{stats['cpu']}%`\n"
-            f"🧠 **Memory:** `{stats['memory_percent']}%`\n"
-            f"💿 **Disk:** `{stats['disk_percent']}%`\n\n"
+            f"🧠 **Memory Usage:** `{stats['memory_percent']:.1f}%`\n"
+            f"💿 **Disk Usage:** `{stats['disk_percent']:.1f}%`\n\n"
             f"⚡ **Status:** {'TURBO READY' if write_speed > 5*1024*1024 else 'NORMAL'}\n"
             f"🔥 **Performance:** {'EXCELLENT' if write_speed > 10*1024*1024 else 'GOOD'}"
         )
@@ -365,7 +392,6 @@ async def stats_command(client: Client, message: Message):
         f"📊 **TURBO SYSTEM STATS**\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👥 **Active Users:** `{active_users}`\n"
-        f"🖥️ **CPU Usage:** `{stats['cpu']}%`\n"
         f"🧠 **Memory:** `{human_readable(stats['memory_used'])} / {human_readable(stats['memory_total'])}`\n"
         f"💿 **Disk:** `{human_readable(stats['disk_used'])} / {human_readable(stats['disk_total'])}`\n"
         f"⚡ **Workers:** `{WORKERS} threads`\n"
