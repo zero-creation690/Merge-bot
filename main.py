@@ -6,6 +6,7 @@ import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
+from aiohttp import web
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -25,6 +26,24 @@ app = Client(
 
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=50)
+
+# ---------- Health Check Server ----------
+async def health_check(request):
+    """Health check endpoint for Koyeb"""
+    return web.Response(text="OK", status=200)
+
+async def start_health_server():
+    """Start health check server on port 8080"""
+    app_web = web.Application()
+    app_web.router.add_get('/health', health_check)
+    app_web.router.add_get('/', health_check)
+    
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("🏥 Health check server running on port 8080")
+    return runner
 
 # ---------- Helpers ----------
 def human_readable(size):
@@ -547,8 +566,17 @@ if __name__ == "__main__":
     print("💪 Workers: 100 threads")
     print("📦 Max Size: 4 GB")
     print("🔥 FFmpeg Progress: ENABLED")
+    print("🏥 Health Check: Port 8080")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("✅ Bot is now ONLINE!")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     
+    # Create event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Start health check server
+    loop.run_until_complete(start_health_server())
+    
+    # Run bot
     app.run()
