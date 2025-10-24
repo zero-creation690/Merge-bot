@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.errors import FloodWait
 import subprocess
 import os
 import time
@@ -7,19 +8,11 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
 from aiohttp import web
-import signal
-import sys
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-
-# Validate credentials
-if not API_ID or not API_HASH or not BOT_TOKEN:
-    print("❌ ERROR: Missing environment variables!")
-    print("Please set: API_ID, API_HASH, BOT_TOKEN")
-    sys.exit(1)
 
 app = Client(
     "SubtitleMergeBot",
@@ -263,7 +256,8 @@ async def help_command(client: Client, message: Message):
         "`/start` - Start the bot\n"
         "`/help` - Show this help message\n"
         "`/cancel` - Cancel current operation\n"
-        "`/stats` - View bot statistics\n\n"
+        "`/stats` - View bot statistics\n"
+        "`/ping` - Check bot response time\n\n"
         "**Speed Tips:**\n"
         "• Bot uses multi-threaded downloads\n"
         "• Average speed: 5-10 MB/s\n"
@@ -272,7 +266,8 @@ async def help_command(client: Client, message: Message):
         "**Limits:**\n"
         "• Max file size: 4GB\n"
         "• Supported video formats: All major formats\n"
-        "• Subtitle format: .srt only"
+        "• Subtitle format: .srt only\n\n"
+        "**Need help?** Just send /start and follow the instructions!"
     )
     await message.reply_text(help_text)
 
@@ -562,16 +557,66 @@ async def handle_subtitle(client: Client, message: Message):
 @app.on_message(filters.command("stats"))
 async def stats_command(client: Client, message: Message):
     active_users = len(user_data)
+    uptime = time.time() - app.start_time if hasattr(app, 'start_time') else 0
     stats_text = (
         f"📊 **BOT STATISTICS**\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👥 **Active Users:** `{active_users}`\n"
         f"⚡ **Max Speed:** `10+ MB/s`\n"
         f"🔄 **Workers:** `100 threads`\n"
-        f"📦 **Max File Size:** `4 GB`\n\n"
+        f"📦 **Max File Size:** `4 GB`\n"
+        f"⏱️ **Uptime:** `{format_time(uptime)}`\n"
+        f"🏥 **Health:** `Healthy ✅`\n\n"
         f"🚀 **Ultra Fast Engine: ONLINE**"
     )
     await message.reply_text(stats_text)
+
+@app.on_message(filters.command("ping"))
+async def ping_command(client: Client, message: Message):
+    start = time.time()
+    sent_msg = await message.reply_text("🏓 Pinging...")
+    end = time.time()
+    await sent_msg.edit_text(
+        f"🏓 **Pong!**\n\n"
+        f"⚡ **Response Time:** `{(end - start) * 1000:.2f}ms`\n"
+        f"🤖 **Bot Status:** Online ✅\n"
+        f"🏥 **Health Check:** Port 8000 ✅"
+    )
+
+async def main():
+    """Main function to run bot and health server concurrently"""
+    # Start health check server
+    await start_health_server()
+    
+    # Set start time for uptime tracking
+    app.start_time = time.time()
+    
+    # Start the bot with retry logic
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            await app.start()
+            print("✅ Bot successfully connected to Telegram!")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+            break
+        except FloodWait as e:
+            retry_count += 1
+            wait_time = min(e.value, 60)  # Wait max 60 seconds
+            print(f"⏳ Flood wait detected. Waiting {wait_time} seconds... (Attempt {retry_count}/{max_retries})")
+            await asyncio.sleep(wait_time)
+        except Exception as e:
+            print(f"❌ Connection error: {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"🔄 Retrying... (Attempt {retry_count}/{max_retries})")
+                await asyncio.sleep(5)
+            else:
+                raise
+    
+    # Keep running
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -583,15 +628,12 @@ if __name__ == "__main__":
     print("🔥 FFmpeg Progress: ENABLED")
     print("🏥 Health Check: Port 8000")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("✅ Bot is now ONLINE!")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     
-    # Create event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Start health check server
-    loop.run_until_complete(start_health_server())
-    
-    # Run bot
-    app.run()
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("\n🛑 Bot stopped!")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
