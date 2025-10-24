@@ -26,7 +26,7 @@ RUN mkdir -p /tmp/downloads
 ENV PYTHONUNBUFFERED=1
 
 # Expose health check port for Koyeb
-EXPOSE 8080
+EXPOSE 8000
 
 # Run the bot
 CMD ["python", "main.py"]
