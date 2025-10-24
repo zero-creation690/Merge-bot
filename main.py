@@ -5,6 +5,7 @@ import os
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -42,6 +43,20 @@ def format_time(seconds):
         return f"{int(seconds // 60)}m {int(seconds % 60)}s"
     else:
         return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+
+def get_video_duration(file_path):
+    """Get video duration using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except:
+        return 0
 
 class UltraFastProgressTracker:
     def __init__(self, client, chat_id, message_id, filename, action="Downloading"):
@@ -112,6 +127,80 @@ class UltraFastProgressTracker:
                 self.message_id, 
                 text
             )
+        except Exception as e:
+            pass
+
+class FFmpegProgressTracker:
+    def __init__(self, client, chat_id, message_id, filename, duration):
+        self.client = client
+        self.chat_id = chat_id
+        self.message_id = message_id
+        self.filename = filename
+        self.duration = duration
+        self.start_time = time.time()
+        self.last_update = 0
+        
+    async def update_from_line(self, line):
+        """Parse FFmpeg output and update progress"""
+        now = time.time()
+        
+        # Update every 2 seconds
+        if now - self.last_update < 2:
+            return
+        
+        # Parse time from FFmpeg output (format: time=00:01:23.45)
+        time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
+        if not time_match:
+            return
+            
+        hours = int(time_match.group(1))
+        minutes = int(time_match.group(2))
+        seconds = float(time_match.group(3))
+        
+        current_time = hours * 3600 + minutes * 60 + seconds
+        
+        if self.duration > 0:
+            percent = min((current_time / self.duration) * 100, 100)
+        else:
+            percent = 0
+        
+        elapsed = now - self.start_time
+        
+        # Calculate ETA
+        if current_time > 0:
+            rate = current_time / elapsed
+            remaining_time = (self.duration - current_time) / rate if rate > 0 else 0
+        else:
+            remaining_time = 0
+        
+        # Create progress bar
+        bar_len = 22
+        filled_len = int(bar_len * percent / 100)
+        bar = "█" * filled_len + "░" * (bar_len - filled_len)
+        
+        # Parse speed from FFmpeg output
+        speed_match = re.search(r'speed=\s*([\d.]+)x', line)
+        speed_text = f"{speed_match.group(1)}x" if speed_match else "1.0x"
+        
+        text = (
+            f"⚙️ **PROCESSING VIDEO**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📁 `{self.filename[:35]}{'...' if len(self.filename) > 35 else ''}`\n\n"
+            f"`{bar}` **{percent:.1f}%**\n\n"
+            f"🔥 **Burning subtitles...**\n"
+            f"⚡ **Speed:** `{speed_text}`\n"
+            f"⏱️ **ETA:** `{format_time(remaining_time)}`\n"
+            f"⏳ **Time:** `{format_time(elapsed)}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        
+        try:
+            await self.client.edit_message_text(
+                self.chat_id,
+                self.message_id,
+                text
+            )
+            self.last_update = now
         except Exception as e:
             pass
 
@@ -281,18 +370,30 @@ async def handle_subtitle(client: Client, message: Message):
             progress=progress.update
         )
         
-        await status_msg.edit_text(
-            "⚙️ **PROCESSING VIDEO**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🔥 Burning subtitles into video..."
-        )
-        
         video_path = user_data[chat_id]["video"]
         original_filename = user_data[chat_id]["filename"]
         base_name = os.path.splitext(original_filename)[0]
         output_file = f"merged_{chat_id}_{base_name}.mp4"
         
+        # Get video duration for progress tracking
+        await status_msg.edit_text(
+            "🔍 **ANALYZING VIDEO**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Getting video information..."
+        )
+        
+        duration = get_video_duration(video_path)
+        
+        await status_msg.edit_text(
+            "⚙️ **PROCESSING VIDEO**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔥 Starting subtitle merge...\n"
+            "`░░░░░░░░░░░░░░░░░░░░░░` **0%**"
+        )
+        
         merge_start = time.time()
+        
+        # FFmpeg command with progress output
         cmd = [
             'ffmpeg',
             '-i', video_path,
@@ -302,31 +403,59 @@ async def handle_subtitle(client: Client, message: Message):
             '-crf', '23',
             '-c:a', 'copy',
             '-threads', '0',
+            '-progress', 'pipe:1',
             '-y',
             output_file
         ]
         
+        # Create progress tracker
+        ffmpeg_progress = FFmpegProgressTracker(
+            client,
+            chat_id,
+            status_msg.id,
+            base_name,
+            duration
+        )
+        
+        # Run FFmpeg with real-time progress
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         
-        stdout, stderr = await process.communicate()
+        # Read output line by line for progress updates
+        async def read_progress():
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                line_str = line.decode().strip()
+                await ffmpeg_progress.update_from_line(line_str)
+        
+        # Start reading progress
+        progress_task = asyncio.create_task(read_progress())
+        
+        # Wait for process to complete
+        await process.wait()
+        await progress_task
+        
         merge_time = time.time() - merge_start
         
         if process.returncode != 0:
-            raise Exception(f"FFmpeg error: {stderr.decode()}")
+            raise Exception("FFmpeg processing failed")
         
         if not os.path.exists(output_file):
             raise Exception("Output file was not created")
         
         output_size = os.path.getsize(output_file)
         
+        # Upload merged video with ultra-fast progress
         await status_msg.edit_text(
             "📤 **UPLOADING VIDEO**\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🚀 Starting ultra-fast upload..."
+            "🚀 Starting ultra-fast upload...\n"
+            "⚡ Maximum speed mode activated"
         )
         
         upload_progress = UltraFastProgressTracker(
@@ -355,14 +484,17 @@ async def handle_subtitle(client: Client, message: Message):
         upload_time = time.time() - upload_start
         upload_speed = output_size / upload_time if upload_time > 0 else 0
         
+        # Send completion message
         await status_msg.edit_text(
             f"🎉 **MISSION COMPLETE!**\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"✅ Video uploaded successfully!\n"
             f"⚡ **Upload Speed:** `{human_readable(upload_speed)}/s`\n"
-            f"⏱️ **Upload Time:** `{format_time(upload_time)}`"
+            f"⏱️ **Upload Time:** `{format_time(upload_time)}`\n\n"
+            f"💡 Send another video to merge more!"
         )
         
+        # Cleanup
         await asyncio.sleep(2)
         await status_msg.delete()
         
@@ -376,8 +508,14 @@ async def handle_subtitle(client: Client, message: Message):
         del user_data[chat_id]
         
     except Exception as e:
-        await status_msg.edit_text(f"❌ **PROCESSING FAILED!**\n\n**Error:** `{str(e)}`")
+        await status_msg.edit_text(
+            f"❌ **PROCESSING FAILED!**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"**Error:** `{str(e)}`\n\n"
+            f"💡 Try again or use /cancel to start over"
+        )
         
+        # Cleanup on error
         if chat_id in user_data:
             video_path = user_data[chat_id].get("video")
             if video_path and os.path.exists(video_path):
@@ -408,6 +546,7 @@ if __name__ == "__main__":
     print("⚡ Speed: Up to 10+ MB/s")
     print("💪 Workers: 100 threads")
     print("📦 Max Size: 4 GB")
+    print("🔥 FFmpeg Progress: ENABLED")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("✅ Bot is now ONLINE!")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
