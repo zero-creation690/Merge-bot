@@ -9,18 +9,19 @@ import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 import re
 import secrets
-from aiohttp import web
+import socket
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
-# ---------------- HYPER TURBO CONFIG ----------------
+# ---------------- WORKING CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-# Hyper optimizations
-MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "536870912"))  # 512MB for hyper speed
-WORKERS = int(os.environ.get("WORKERS", "100"))
-CACHE_DIR = "/tmp/hyper_cache"
+# Working optimizations
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "2147483648"))  # 2GB
+WORKERS = int(os.environ.get("WORKERS", "50"))
+CACHE_DIR = "/tmp/bot_cache"
 
 # Create cache directory
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -30,40 +31,49 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Client(
-    "HyperTurboBot",
+    "WorkingSubtitleBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     workdir=CACHE_DIR,
     in_memory=True,
     workers=WORKERS,
-    max_concurrent_transmissions=25,
-    sleep_threshold=20
+    max_concurrent_transmissions=10,
+    sleep_threshold=60
 )
 
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=WORKERS)
 
-# ---------- HEALTH CHECK SERVER ----------
-async def health_handler(request):
-    return web.Response(text="🚀 HYPER BOT IS RUNNING!")
+# ---------- SIMPLE HEALTH CHECK SERVER ----------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ['/', '/health']:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"Bot is running!")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        return  # Disable access logs
 
 def start_health_server():
-    """Start health check server on port 8000"""
-    health_app = web.Application()
-    health_app.router.add_get('/', health_handler)
-    health_app.router.add_get('/health', health_handler)
-    
+    """Start simple health check server"""
     try:
-        web.run_app(health_app, host='0.0.0.0', port=8000, access_log=None)
+        server = HTTPServer(('0.0.0.0', 8000), HealthHandler)
+        print("✅ Health server running on port 8000")
+        server.serve_forever()
     except Exception as e:
-        logger.error(f"Health server failed: {e}")
+        print(f"❌ Health server failed: {e}")
 
-# Start health server in background
+# Start health server in background thread
 health_thread = threading.Thread(target=start_health_server, daemon=True)
 health_thread.start()
 
-# ---------- HYPER SPEED HELPERS ----------
+# ---------- WORKING HELPERS ----------
 def human_readable(size):
     """Convert bytes to human readable format"""
     for unit in ["B", "KB", "MB", "GB"]:
@@ -81,8 +91,23 @@ def format_time(seconds):
     else:
         return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
 
-class HyperProgress:
-    def __init__(self, client, chat_id, message_id, filename, action="DOWNLOAD"):
+def get_video_duration(file_path):
+    """Get video duration using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return float(result.stdout.strip())
+    except Exception as e:
+        logger.error(f"Error getting video duration: {e}")
+        return 0
+
+class WorkingProgress:
+    def __init__(self, client, chat_id, message_id, filename, action="Downloading"):
         self.client = client
         self.chat_id = chat_id
         self.message_id = message_id
@@ -90,105 +115,37 @@ class HyperProgress:
         self.action = action
         self.start_time = time.time()
         self.last_update = 0
-        self.speeds = []
         
     async def update(self, current, total):
-        """HYPER SPEED progress tracking"""
+        """Working progress tracking"""
         now = time.time()
         
-        # Ultra fast updates every 0.3 seconds
-        if now - self.last_update < 0.3 and current < total:
-            return
-            
-        time_diff = now - self.last_update if self.last_update > 0 else 1
-        self.last_update = now
-        
-        # Calculate speed in MB/s
-        bytes_diff = current - self.speeds[-1][0] if self.speeds else current
-        speed_mbs = (bytes_diff / time_diff) / (1024 * 1024) if time_diff > 0 else 0
-        
-        self.speeds.append((current, speed_mbs))
-        if len(self.speeds) > 8:
-            self.speeds.pop(0)
-        
-        avg_speed_mbs = sum(s[1] for s in self.speeds) / len(self.speeds) if self.speeds else 0
-        percent = (current * 100 / total) if total > 0 else 0
-        eta = (total - current) / (avg_speed_mbs * 1024 * 1024) if avg_speed_mbs > 0 else 0
-        
-        # Hyper compact display
-        bar_len = 10
-        filled_len = int(bar_len * current // total) if total > 0 else 0
-        bar = "█" * filled_len + "░" * (bar_len - filled_len)
-        
-        # Speed indicators
-        if avg_speed_mbs > 50:
-            emoji = "🚀"
-        elif avg_speed_mbs > 25:
-            emoji = "⚡"
-        elif avg_speed_mbs > 10:
-            emoji = "🔥"
-        else:
-            emoji = "📶"
-        
-        text = (
-            f"{emoji} **{self.action}** • **{avg_speed_mbs:.1f} MB/s**\n"
-            f"`{bar}` **{percent:.1f}%** • ETA: `{format_time(eta)}`\n"
-            f"`{human_readable(current)}` / `{human_readable(total)}`"
-        )
-        
-        try:
-            await self.client.edit_message_text(self.chat_id, self.message_id, text)
-        except:
-            pass
-
-class HyperFFmpeg:
-    def __init__(self, client, chat_id, message_id, filename, total_size):
-        self.client = client
-        self.chat_id = chat_id
-        self.message_id = message_id
-        self.filename = filename
-        self.total_size = total_size
-        self.start_time = time.time()
-        self.last_update = 0
-        self.processed_size = 0
-        
-    async def update(self, current_size):
-        """HYPER FFmpeg progress with MB/s"""
-        now = time.time()
-        if now - self.last_update < 0.5:
+        if now - self.last_update < 2 and current < total:
             return
             
         self.last_update = now
         elapsed = now - self.start_time
         
-        # Calculate processing speed in MB/s
-        speed_mbs = (current_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0
-        percent = (current_size / self.total_size) * 100 if self.total_size > 0 else 0
+        percent = (current * 100 / total) if total > 0 else 0
         
-        # Calculate ETA
-        if speed_mbs > 0:
-            eta = (self.total_size - current_size) / (speed_mbs * 1024 * 1024)
+        # Calculate speed in MB/s
+        if elapsed > 0:
+            speed_mbs = (current / elapsed) / (1024 * 1024)
         else:
-            eta = 0
+            speed_mbs = 0
+            
+        eta = (total - current) / (speed_mbs * 1024 * 1024) if speed_mbs > 0 else 0
         
-        bar_len = 10
-        filled_len = int(bar_len * percent / 100)
+        bar_len = 12
+        filled_len = int(bar_len * current // total) if total > 0 else 0
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
         
-        # Burning speed indicators
-        if speed_mbs > 40:
-            emoji, status = "🚀", "HYPER BURN"
-        elif speed_mbs > 20:
-            emoji, status = "⚡", "TURBO BURN"
-        elif speed_mbs > 10:
-            emoji, status = "🔥", "FAST BURN"
-        else:
-            emoji, status = "⚙️", "BURNING"
-        
         text = (
-            f"{emoji} **{status}** • **{speed_mbs:.1f} MB/s**\n"
-            f"`{bar}` **{percent:.1f}%** • ETA: `{format_time(eta)}`\n"
-            f"`{self.filename[:20]}`"
+            f"📥 **{self.action}**\n"
+            f"`{bar}` **{percent:.1f}%**\n"
+            f"**Speed:** `{speed_mbs:.1f} MB/s`\n"
+            f"**ETA:** `{format_time(eta)}`\n"
+            f"`{human_readable(current)} / {human_readable(total)}`"
         )
         
         try:
@@ -196,80 +153,37 @@ class HyperFFmpeg:
         except:
             pass
 
-# ---------- HYPER COMMANDS ----------
+# ---------- WORKING COMMANDS ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 HYPER GUIDE", callback_data="help")],
-        [InlineKeyboardButton("⚡ SPEED TEST", callback_data="speedtest")]
-    ])
-    
     welcome_text = (
-        "🚀 **HYPER SUBTITLE BOT** 🚀\n\n"
-        "⚡ **Features:**\n"
-        "• **100+ MB/s** Download Speed\n"
-        "• **50+ MB/s** Processing Speed\n"
-        "• **Instant** Merging\n"
-        "• **Zero Delay** Operations\n\n"
-        "📋 **Usage:**\n"
-        "1. Send video\n"
-        "2. Send subtitle\n"
+        "🎬 **SUBTITLE MERGE BOT**\n\n"
+        "**How to use:**\n"
+        "1. Send video file\n"
+        "2. Send subtitle file (.srt)\n"
         "3. Get merged video!\n\n"
-        "🔥 **READY FOR HYPER SPEED!**"
+        "**Supported:** MP4, MKV, AVI + SRT\n"
+        "**Max size:** 2GB\n\n"
+        "🚀 **Ready to merge!**"
     )
-    await message.reply_text(welcome_text, reply_markup=keyboard)
+    await message.reply_text(welcome_text)
 
 @app.on_message(filters.command("help"))
 async def help_command(client: Client, message: Message):
     help_text = (
-        "🆘 **HYPER SPEED GUIDE**\n\n"
+        "📖 **HELP GUIDE**\n\n"
         "**Commands:**\n"
-        "`/start` - Start hyper mode\n"
+        "`/start` - Start bot\n"
+        "`/help` - This guide\n"
         "`/cancel` - Cancel operation\n\n"
-        "**Speed:** 100+ MB/s\n"
-        "**Limit:** 512MB files\n"
-        "**Format:** MP4 + SRT"
+        "**Steps:**\n"
+        "1. Send video (MP4, MKV, AVI)\n"
+        "2. Send subtitle (.srt only)\n"
+        "3. Wait for processing\n"
+        "4. Download merged video\n\n"
+        "**Note:** Keep files under 2GB"
     )
     await message.reply_text(help_text)
-
-@app.on_message(filters.command("speedtest"))
-async def speed_test(client: Client, message: Message):
-    test_msg = await message.reply_text("🚀 **HYPER SPEED TEST...**")
-    
-    try:
-        start_time = time.time()
-        test_size = 10 * 1024 * 1024
-        test_file = os.path.join(CACHE_DIR, f"hyper_test_{message.chat.id}.tmp")
-        
-        # Hyper fast write
-        async with aiofiles.open(test_file, 'wb') as f:
-            data = secrets.token_bytes(test_size)
-            await f.write(data)
-        
-        write_time = time.time() - start_time
-        write_speed = test_size / write_time / (1024 * 1024)
-        
-        # Hyper fast read
-        read_start = time.time()
-        async with aiofiles.open(test_file, 'rb') as f:
-            await f.read()
-        read_time = time.time() - read_start
-        read_speed = test_size / read_time / (1024 * 1024)
-        
-        result_text = (
-            f"📊 **HYPER SPEED RESULTS**\n\n"
-            f"🚀 **Write:** `{write_speed:.1f} MB/s`\n"
-            f"⚡ **Read:** `{read_speed:.1f} MB/s`\n\n"
-            f"🔥 **Status:** {'HYPER READY' if write_speed > 50 else 'TURBO READY'}"
-        )
-        
-        await test_msg.edit_text(result_text)
-        
-    except Exception as e:
-        await test_msg.edit_text(f"❌ **Test failed:** `{str(e)}`")
-    finally:
-        if os.path.exists(test_file):
-            os.remove(test_file)
 
 @app.on_message(filters.command("cancel"))
 async def cancel_operation(client: Client, message: Message):
@@ -283,11 +197,11 @@ async def cancel_operation(client: Client, message: Message):
                 except:
                     pass
         del user_data[chat_id]
-        await message.reply_text("✅ **Cancelled!**")
+        await message.reply_text("✅ **Operation cancelled!**")
     else:
         await message.reply_text("❌ **No active operation!**")
 
-# ---------- HYPER FILE HANDLERS ----------
+# ---------- WORKING FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -303,21 +217,22 @@ async def handle_file(client: Client, message: Message):
         return
     
     if chat_id in user_data and "video" in user_data[chat_id]:
-        await message.reply_text("⚠️ **Video received!** Send .srt now.")
+        await message.reply_text("⚠️ **Video received!** Send subtitle file (.srt) now.")
         return
     
     file_size = file_obj.file_size
     if file_size > MAX_FILE_SIZE:
-        await message.reply_text(f"❌ **Too large!** Max: `{human_readable(MAX_FILE_SIZE)}`")
+        await message.reply_text(f"❌ **File too large!** Max: {human_readable(MAX_FILE_SIZE)}")
         return
     
-    # Hyper fast setup
-    unique_id = secrets.token_hex(4)
-    filename = f"v_{unique_id}.mp4"
+    # Generate unique filename
+    file_ext = os.path.splitext(file_obj.file_name or "video.mp4")[1]
+    unique_id = secrets.token_hex(8)
+    filename = f"video_{unique_id}{file_ext}"
     
-    status_msg = await message.reply_text("🚀 **HYPER DOWNLOAD STARTED**")
+    status_msg = await message.reply_text("📥 **Downloading video...**")
     
-    progress = HyperProgress(client, chat_id, status_msg.id, filename, "DOWNLOAD")
+    progress = WorkingProgress(client, chat_id, status_msg.id, filename, "DOWNLOADING")
     
     try:
         download_start = time.time()
@@ -336,14 +251,14 @@ async def handle_file(client: Client, message: Message):
         }
         
         await status_msg.edit_text(
-            f"✅ **DOWNLOAD COMPLETE!**\n\n"
-            f"🚀 **Speed:** `{avg_speed:.1f} MB/s`\n"
-            f"⏱️ **Time:** `{format_time(download_time)}`\n\n"
-            f"🔥 **Send subtitle file (.srt)**"
+            f"✅ **Download complete!**\n\n"
+            f"**Speed:** {avg_speed:.1f} MB/s\n"
+            f"**Time:** {format_time(download_time)}\n\n"
+            f"📝 **Now send your subtitle file (.srt)**"
         )
         
     except Exception as e:
-        await status_msg.edit_text(f"❌ **Download failed:** `{str(e)}`")
+        await status_msg.edit_text(f"❌ **Download failed:** {str(e)}")
         if chat_id in user_data:
             del user_data[chat_id]
 
@@ -351,21 +266,21 @@ async def handle_subtitle(client: Client, message: Message):
     chat_id = message.chat.id
     
     if chat_id not in user_data or "video" not in user_data[chat_id]:
-        await message.reply_text("⚠️ **Send video first!**")
+        await message.reply_text("⚠️ **Please send video file first!**")
         return
     
     sub_obj = message.document
     
     if not sub_obj.file_name or not sub_obj.file_name.lower().endswith('.srt'):
-        await message.reply_text("❌ **Invalid!** Send .srt file.")
+        await message.reply_text("❌ **Invalid file!** Please send .srt subtitle file.")
         return
     
-    status_msg = await message.reply_text("🚀 **DOWNLOADING SUBTITLE**")
+    status_msg = await message.reply_text("📥 **Downloading subtitle...**")
     
-    unique_id = secrets.token_hex(4)
-    sub_filename = f"s_{unique_id}.srt"
+    unique_id = secrets.token_hex(8)
+    sub_filename = f"sub_{unique_id}.srt"
     
-    progress = HyperProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOAD")
+    progress = WorkingProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOADING")
     
     try:
         sub_path = await message.download(
@@ -376,34 +291,32 @@ async def handle_subtitle(client: Client, message: Message):
         video_path = user_data[chat_id]["video"]
         original_filename = user_data[chat_id]["filename"]
         base_name = os.path.splitext(original_filename)[0]
-        output_filename = f"m_{unique_id}.mp4"
+        output_filename = f"merged_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
         
-        video_size = user_data[chat_id]["file_size"]
+        # Get video duration
+        await status_msg.edit_text("⏳ **Analyzing video...**")
+        duration = await asyncio.get_event_loop().run_in_executor(
+            executor, get_video_duration, video_path
+        )
         
-        await status_msg.edit_text("🚀 **HYPER PROCESSING STARTED**")
+        await status_msg.edit_text("🔥 **Processing video...**\n`░░░░░░░░░░░░` **0%**")
         
         merge_start = time.time()
-        ffmpeg_progress = HyperFFmpeg(client, chat_id, status_msg.id, base_name, video_size)
         
-        # HYPER FFMPEG COMMAND - MAXIMUM SPEED
+        # SIMPLE WORKING FFMPEG COMMAND
         cmd = [
             'ffmpeg',
             '-i', video_path,
             '-vf', f"subtitles={sub_path}",
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'fastdecode',
-            '-crf', '26',
-            '-c:a', 'copy',
-            '-movflags', '+faststart',
-            '-threads', '4',
-            '-y',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-y',  # Overwrite output file
             output_file
         ]
-        
-        # Start progress simulation
-        progress_task = asyncio.create_task(simulate_progress(ffmpeg_progress, video_size, merge_start))
         
         # Run FFmpeg
         process = await asyncio.create_subprocess_exec(
@@ -412,78 +325,111 @@ async def handle_subtitle(client: Client, message: Message):
             stderr=asyncio.subprocess.PIPE
         )
         
+        # Wait for completion with timeout
         try:
-            await asyncio.wait_for(process.wait(), timeout=180)  # 3 minute timeout
+            await asyncio.wait_for(process.wait(), timeout=600)  # 10 minute timeout
         except asyncio.TimeoutError:
-            process.kill()
-            progress_task.cancel()
-            raise Exception("HYPER TIMEOUT - File too large")
-        
-        progress_task.cancel()
+            await status_msg.edit_text("❌ **Processing timeout!** Try smaller file.")
+            if chat_id in user_data:
+                del user_data[chat_id]
+            return
         
         if process.returncode != 0:
-            raise Exception("FFmpeg processing failed")
+            # Get error message
+            stderr_output = await process.stderr.read()
+            error_text = stderr_output.decode('utf-8', errors='ignore')
+            logger.error(f"FFmpeg error: {error_text}")
+            
+            # Check for common errors
+            if "Invalid data found" in error_text:
+                raise Exception("Invalid video file format")
+            elif "Subtitle codec" in error_text:
+                raise Exception("Invalid subtitle format")
+            elif "No such file" in error_text:
+                raise Exception("File not found")
+            else:
+                raise Exception("Video processing failed")
         
         merge_time = time.time() - merge_start
+        
+        if not os.path.exists(output_file):
+            raise Exception("Output file was not created")
+        
         output_size = os.path.getsize(output_file)
-        processing_speed = (video_size / merge_time) / (1024 * 1024) if merge_time > 0 else 0
         
-        # Hyper upload
-        await status_msg.edit_text("🚀 **HYPER UPLOAD STARTED**")
+        # Upload video
+        await status_msg.edit_text("📤 **Uploading merged video...**")
         
-        upload_progress = HyperProgress(client, chat_id, status_msg.id, f"merged_{base_name}.mp4", "UPLOAD")
+        upload_progress = WorkingProgress(
+            client, chat_id, status_msg.id, 
+            f"merged_{base_name}.mp4", "UPLOADING"
+        )
         
         upload_start = time.time()
         await client.send_video(
             chat_id,
             output_file,
             caption=(
-                f"✅ **HYPER MERGE COMPLETE!**\n\n"
-                f"🚀 **Process Speed:** `{processing_speed:.1f} MB/s`\n"
-                f"⏱️ **Process Time:** `{format_time(merge_time)}`\n"
-                f"📦 **Output Size:** `{human_readable(output_size)}`\n\n"
-                f"🔥 **READY FOR NEXT!**"
+                f"✅ **Subtitle merge complete!**\n\n"
+                f"**File:** {base_name}.mp4\n"
+                f"**Size:** {human_readable(output_size)}\n"
+                f"**Process time:** {format_time(merge_time)}\n\n"
+                f"🎬 **Subtitles permanently added!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
         )
         upload_time = time.time() - upload_start
         
-        # Success
+        # Success message
+        total_time = time.time() - user_data[chat_id]["start_time"]
         await status_msg.edit_text(
-            f"🎉 **HYPER SUCCESS!**\n\n"
-            f"✅ **Total Time:** `{format_time(time.time() - user_data[chat_id]['start_time'])}`\n"
-            f"🚀 **Send next file!**"
+            f"🎉 **Success!**\n\n"
+            f"**Total time:** {format_time(total_time)}\n"
+            f"**Upload speed:** {output_size/upload_time/(1024*1024):.1f} MB/s\n\n"
+            f"🚀 **Ready for next file!**"
         )
         
-        # Quick cleanup
-        await asyncio.sleep(1)
+        # Cleanup after success
+        await asyncio.sleep(3)
         try:
             await status_msg.delete()
         except:
             pass
         
-        # Clean files
+        # Remove temporary files
         for file_path in [video_path, sub_path, output_file]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Cleanup error: {e}")
         
         del user_data[chat_id]
         
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Hyper error: {error_msg}")
+        logger.error(f"Processing error: {error_msg}")
+        
+        user_friendly_error = "Processing failed"
+        if "Invalid" in error_msg:
+            user_friendly_error = "Invalid file format"
+        elif "timeout" in error_msg:
+            user_friendly_error = "Processing timeout - file too large"
+        elif "subtitle" in error_msg.lower():
+            user_friendly_error = "Subtitle file error"
         
         await status_msg.edit_text(
-            f"❌ **HYPER FAILED!**\n\n"
-            f"`{error_msg[:80]}`\n\n"
-            f"💡 Use smaller files for hyper speed!"
+            f"❌ **{user_friendly_error}**\n\n"
+            f"**Error:** {error_msg[:100]}\n\n"
+            f"💡 **Tips:**\n"
+            f"• Use MP4 files for best compatibility\n"
+            f"• Ensure subtitle is proper .srt format\n"
+            f"• Try smaller file size\n"
+            f"• Use /cancel to restart"
         )
         
-        # Emergency cleanup
+        # Cleanup on error
         if chat_id in user_data:
             for key in ["video", "subtitle", "output"]:
                 file_path = user_data[chat_id].get(key)
@@ -494,38 +440,18 @@ async def handle_subtitle(client: Client, message: Message):
                         pass
             del user_data[chat_id]
 
-async def simulate_progress(progress_tracker, total_size, start_time):
-    """Simulate progress for FFmpeg with MB/s calculation"""
-    try:
-        elapsed = 0
-        while elapsed < 300:  # 5 minute max
-            elapsed = time.time() - start_time
-            # Simulate processing based on time
-            current_size = min(total_size, total_size * (elapsed / 60))  # Assume 1 minute for full processing
-            await progress_tracker.update(current_size)
-            await asyncio.sleep(0.5)
-    except:
-        pass
-
-# Callback handler
-@app.on_callback_query()
-async def handle_callbacks(client, callback_query):
-    data = callback_query.data
-    chat_id = callback_query.message.chat.id
-    
-    if data == "help":
-        await help_command(client, callback_query.message)
-    elif data == "speedtest":
-        await speed_test(client, callback_query.message)
-    
-    await callback_query.answer()
-
-# HYPER STARTUP
+# ---------- BOT STARTUP ----------
 if __name__ == "__main__":
-    print("🚀 HYPER SUBTITLE BOT - READY!")
-    print("⚡ Speed: 100+ MB/s | 💪 Workers: 100")
-    print("📦 Max Size: 512MB | 🔥 Mode: HYPER")
-    print("🌐 Health Server: Port 8000")
-    print("✅ Bot is LIVE and READY!")
+    print("=" * 50)
+    print("🎬 SUBTITLE MERGE BOT - WORKING VERSION")
+    print("=" * 50)
+    print("✅ Health server: Port 8000")
+    print("✅ Max file size: 2GB") 
+    print("✅ Supported: MP4, MKV, AVI + SRT")
+    print("✅ Ready for processing!")
+    print("=" * 50)
     
-    app.run()
+    try:
+        app.run()
+    except Exception as e:
+        print(f"❌ Bot failed to start: {e}")
