@@ -1,14 +1,11 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram.errors import FloodWait
 import subprocess
 import os
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
-from aiohttp import web
-import threading
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -28,31 +25,6 @@ app = Client(
 
 user_data = {}
 executor = ThreadPoolExecutor(max_workers=50)
-
-# ---------- Health Check Server ----------
-def run_health_server():
-    """Run health check server in separate thread"""
-    async def health_check(request):
-        return web.Response(text="OK", status=200)
-    
-    async def start_server():
-        app_web = web.Application()
-        app_web.router.add_get('/health', health_check)
-        app_web.router.add_get('/', health_check)
-        
-        runner = web.AppRunner(app_web)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 8000)
-        await site.start()
-        print("🏥 Health check server running on port 8000")
-        
-        # Keep server running
-        while True:
-            await asyncio.sleep(3600)
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_server())
 
 # ---------- Helpers ----------
 def human_readable(size):
@@ -172,9 +144,11 @@ class FFmpegProgressTracker:
         """Parse FFmpeg output and update progress"""
         now = time.time()
         
+        # Update every 2 seconds
         if now - self.last_update < 2:
             return
         
+        # Parse time from FFmpeg output (format: time=00:01:23.45)
         time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
         if not time_match:
             return
@@ -192,16 +166,19 @@ class FFmpegProgressTracker:
         
         elapsed = now - self.start_time
         
+        # Calculate ETA
         if current_time > 0:
             rate = current_time / elapsed
             remaining_time = (self.duration - current_time) / rate if rate > 0 else 0
         else:
             remaining_time = 0
         
+        # Create progress bar
         bar_len = 22
         filled_len = int(bar_len * percent / 100)
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
         
+        # Parse speed from FFmpeg output
         speed_match = re.search(r'speed=\s*([\d.]+)x', line)
         speed_text = f"{speed_match.group(1)}x" if speed_match else "1.0x"
         
@@ -259,8 +236,7 @@ async def help_command(client: Client, message: Message):
         "`/start` - Start the bot\n"
         "`/help` - Show this help message\n"
         "`/cancel` - Cancel current operation\n"
-        "`/stats` - View bot statistics\n"
-        "`/ping` - Check bot response time\n\n"
+        "`/stats` - View bot statistics\n\n"
         "**Speed Tips:**\n"
         "• Bot uses multi-threaded downloads\n"
         "• Average speed: 5-10 MB/s\n"
@@ -269,8 +245,7 @@ async def help_command(client: Client, message: Message):
         "**Limits:**\n"
         "• Max file size: 4GB\n"
         "• Supported video formats: All major formats\n"
-        "• Subtitle format: .srt only\n\n"
-        "**Need help?** Just send /start and follow the instructions!"
+        "• Subtitle format: .srt only"
     )
     await message.reply_text(help_text)
 
@@ -288,35 +263,6 @@ async def cancel_operation(client: Client, message: Message):
         await message.reply_text("✅ **Operation cancelled!** All files removed.")
     else:
         await message.reply_text("❌ **No active operation to cancel!**")
-
-@app.on_message(filters.command("ping"))
-async def ping_command(client: Client, message: Message):
-    start = time.time()
-    sent_msg = await message.reply_text("🏓 Pinging...")
-    end = time.time()
-    await sent_msg.edit_text(
-        f"🏓 **Pong!**\n\n"
-        f"⚡ **Response Time:** `{(end - start) * 1000:.2f}ms`\n"
-        f"🤖 **Bot Status:** Online ✅\n"
-        f"🏥 **Health Check:** Port 8000 ✅"
-    )
-
-@app.on_message(filters.command("stats"))
-async def stats_command(client: Client, message: Message):
-    active_users = len(user_data)
-    uptime = time.time() - app.start_time if hasattr(app, 'start_time') else 0
-    stats_text = (
-        f"📊 **BOT STATISTICS**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 **Active Users:** `{active_users}`\n"
-        f"⚡ **Max Speed:** `10+ MB/s`\n"
-        f"🔄 **Workers:** `100 threads`\n"
-        f"📦 **Max File Size:** `4 GB`\n"
-        f"⏱️ **Uptime:** `{format_time(uptime)}`\n"
-        f"🏥 **Health:** `Healthy ✅`\n\n"
-        f"🚀 **Ultra Fast Engine: ONLINE**"
-    )
-    await message.reply_text(stats_text)
 
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
@@ -429,6 +375,7 @@ async def handle_subtitle(client: Client, message: Message):
         base_name = os.path.splitext(original_filename)[0]
         output_file = f"merged_{chat_id}_{base_name}.mp4"
         
+        # Get video duration for progress tracking
         await status_msg.edit_text(
             "🔍 **ANALYZING VIDEO**\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -446,19 +393,22 @@ async def handle_subtitle(client: Client, message: Message):
         
         merge_start = time.time()
         
+        # FFmpeg command with progress output
         cmd = [
             'ffmpeg',
             '-i', video_path,
-            '-vf', f"subtitles={sub_path}:force_style='FontSize=24'",
+            '-vf', f"subtitles='{sub_path}'",
             '-c:v', 'libx264',
-            '-preset', 'medium',
+            '-preset', 'ultrafast',
             '-crf', '23',
             '-c:a', 'copy',
             '-threads', '0',
+            '-progress', 'pipe:1',
             '-y',
             output_file
         ]
         
+        # Create progress tracker
         ffmpeg_progress = FFmpegProgressTracker(
             client,
             chat_id,
@@ -467,47 +417,45 @@ async def handle_subtitle(client: Client, message: Message):
             duration
         )
         
+        # Run FFmpeg with real-time progress
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
+            stderr=asyncio.subprocess.PIPE
         )
         
+        # Read output line by line for progress updates
         async def read_progress():
-            try:
-                while True:
-                    line = await process.stdout.readline()
-                    if not line:
-                        break
-                    line_str = line.decode('utf-8', errors='ignore').strip()
-                    if line_str:
-                        await ffmpeg_progress.update_from_line(line_str)
-            except Exception as e:
-                print(f"Progress read error: {e}")
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                line_str = line.decode().strip()
+                await ffmpeg_progress.update_from_line(line_str)
         
+        # Start reading progress
         progress_task = asyncio.create_task(read_progress())
         
+        # Wait for process to complete
         await process.wait()
-        
-        try:
-            await asyncio.wait_for(progress_task, timeout=2.0)
-        except asyncio.TimeoutError:
-            pass
+        await progress_task
         
         merge_time = time.time() - merge_start
         
         if process.returncode != 0:
-            raise Exception("FFmpeg processing failed - check video/subtitle compatibility")
+            raise Exception("FFmpeg processing failed")
         
         if not os.path.exists(output_file):
             raise Exception("Output file was not created")
         
         output_size = os.path.getsize(output_file)
         
+        # Upload merged video with ultra-fast progress
         await status_msg.edit_text(
             "📤 **UPLOADING VIDEO**\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🚀 Starting ultra-fast upload..."
+            "🚀 Starting ultra-fast upload...\n"
+            "⚡ Maximum speed mode activated"
         )
         
         upload_progress = UltraFastProgressTracker(
@@ -536,6 +484,7 @@ async def handle_subtitle(client: Client, message: Message):
         upload_time = time.time() - upload_start
         upload_speed = output_size / upload_time if upload_time > 0 else 0
         
+        # Send completion message
         await status_msg.edit_text(
             f"🎉 **MISSION COMPLETE!**\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -545,6 +494,7 @@ async def handle_subtitle(client: Client, message: Message):
             f"💡 Send another video to merge more!"
         )
         
+        # Cleanup
         await asyncio.sleep(2)
         await status_msg.delete()
         
@@ -565,6 +515,7 @@ async def handle_subtitle(client: Client, message: Message):
             f"💡 Try again or use /cancel to start over"
         )
         
+        # Cleanup on error
         if chat_id in user_data:
             video_path = user_data[chat_id].get("video")
             if video_path and os.path.exists(video_path):
@@ -574,6 +525,20 @@ async def handle_subtitle(client: Client, message: Message):
                     pass
             del user_data[chat_id]
 
+@app.on_message(filters.command("stats"))
+async def stats_command(client: Client, message: Message):
+    active_users = len(user_data)
+    stats_text = (
+        f"📊 **BOT STATISTICS**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 **Active Users:** `{active_users}`\n"
+        f"⚡ **Max Speed:** `10+ MB/s`\n"
+        f"🔄 **Workers:** `100 threads`\n"
+        f"📦 **Max File Size:** `4 GB`\n\n"
+        f"🚀 **Ultra Fast Engine: ONLINE**"
+    )
+    await message.reply_text(stats_text)
+
 if __name__ == "__main__":
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("🚀 ULTRA FAST SUBTITLE MERGE BOT")
@@ -582,26 +547,8 @@ if __name__ == "__main__":
     print("💪 Workers: 100 threads")
     print("📦 Max Size: 4 GB")
     print("🔥 FFmpeg Progress: ENABLED")
-    print("🏥 Health Check: Port 8000")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    
-    # Start health server in background thread
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
-    
-    # Give health server time to start
-    time.sleep(2)
-    
-    # Set start time
-    app.start_time = time.time()
-    
-    print("✅ Bot starting...")
+    print("✅ Bot is now ONLINE!")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     
-    # Run bot (handles FloodWait automatically)
-    try:
-        app.run()
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
+    app.run()
