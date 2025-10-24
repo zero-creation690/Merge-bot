@@ -61,7 +61,7 @@ user_data = {}
 
 # ---------------- HELPERS ----------------
 def human_readable(size: int) -> str:
-    for unit in ["B","KB","MB","GB"]:
+    for unit in ["B","KB","MB","GB","TB"]:
         if size < 1024: return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
