@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Ultra Fast Subtitle Burner - With Real FFmpeg Progress Tracking
-Fixes long processing times with actual progress parsing
+Ultra Fast Subtitle Burner - SPEED OPTIMIZED
+Uses hardware acceleration and optimized settings for maximum speed
 """
 
 from pyrogram import Client, filters
@@ -125,28 +125,123 @@ def get_video_duration(file_path: str) -> float:
         logger.warning(f"Could not get video duration: {e}")
     return 0.0
 
-def get_video_resolution(file_path: str) -> tuple:
+def get_video_codec(file_path: str) -> str:
+    """Get video codec to determine if we can use copy"""
     try:
         cmd = [
             'ffprobe', '-v', 'error',
             '-select_streams', 'v:0',
-            '-show_entries', 'stream=width,height',
-            '-of', 'csv=p=0',
+            '-show_entries', 'stream=codec_name',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
             file_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if result.returncode == 0:
-            dimensions = result.stdout.strip().split(',')
-            if len(dimensions) == 2:
-                return int(dimensions[0]), int(dimensions[1])
+            return result.stdout.strip()
     except Exception as e:
-        logger.warning(f"Could not get video resolution: {e}")
-    return (1920, 1080)
+        logger.warning(f"Could not get video codec: {e}")
+    return "h264"
+
+def check_hardware_acceleration():
+    """Check available hardware acceleration"""
+    try:
+        # Check for NVIDIA
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return "nvidia"
+        
+        # Check for VAAPI
+        result = subprocess.run(['vainfo'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return "vaapi"
+            
+        # Check for QSV
+        result = subprocess.run(['ls', '/dev/dri'], capture_output=True, text=True)
+        if 'render' in result.stdout:
+            return "qsv"
+            
+    except Exception:
+        pass
+    return "software"
 
 def sanitize_filename(filename: str) -> str:
     return re.sub(r'[^\w\-_. ]', '', filename)
 
-# ---------- REAL PROGRESS TRACKING ----------
+# ---------- OPTIMIZED FFMPEG COMMANDS ----------
+def get_optimized_ffmpeg_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str, duration: float):
+    """Get optimized FFmpeg command based on available hardware"""
+    hw_accel = check_hardware_acceleration()
+    logger.info(f"Using hardware acceleration: {hw_accel}")
+    
+    base_cmd = ['ffmpeg', '-hide_banner', '-y']
+    
+    # Input options for speed
+    base_cmd.extend(['-i', video_path])
+    
+    # Subtitle filter
+    if sub_ext == '.ass':
+        vf_filter = f"ass={shlex.quote(subtitle_path)}"
+    else:
+        vf_filter = f"subtitles={shlex.quote(subtitle_path)}"
+    
+    # VIDEO ENCODING OPTIMIZATIONS
+    if hw_accel == "nvidia":
+        # NVIDIA NVENC - fastest hardware encoding
+        base_cmd.extend([
+            '-vf', vf_filter,
+            '-c:v', 'h264_nvenc',
+            '-preset', 'p1',  # fastest nvenc preset
+            '-rc', 'constqp',
+            '-qp', '23',
+            '-b:v', '0',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-movflags', '+faststart'
+        ])
+    elif hw_accel == "vaapi":
+        # VAAPI hardware encoding
+        base_cmd.extend([
+            '-vaapi_device', '/dev/dri/renderD128',
+            '-vf', f'format=nv12,hwupload,{vf_filter}',
+            '-c:v', 'h264_vaapi',
+            '-global_quality', '23',
+            '-c:a', 'aac',
+            '-b:a', '128k'
+        ])
+    elif hw_accel == "qsv":
+        # Intel Quick Sync
+        base_cmd.extend([
+            '-vf', f'format=nv12,hwupload=extra_hw_frames=64,{vf_filter}',
+            '-c:v', 'h264_qsv',
+            '-preset', 'veryfast',
+            '-global_quality', '23',
+            '-c:a', 'aac',
+            '-b:a', '128k'
+        ])
+    else:
+        # SOFTWARE ENCODING - ULTRA FAST SETTINGS
+        base_cmd.extend([
+            '-vf', vf_filter,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',  # Fastest software preset
+            '-crf', '28',  # Slightly higher CRF for speed
+            '-tune', 'fastdecode',  # Optimize for decoding speed
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-movflags', '+faststart',
+            '-threads', '0'  # Use all available threads
+        ])
+    
+    # For very long videos, use faster settings
+    if duration > 600:  # Longer than 10 minutes
+        if hw_accel == "software":
+            base_cmd.extend(['-preset', 'ultrafast', '-crf', '30'])
+        logger.info("Using ultra-fast settings for long video")
+    
+    base_cmd.append(output_path)
+    return base_cmd
+
+# ---------- PROGRESS TRACKING ----------
 class RealBurningProgress:
     def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float):
         self.client = client
@@ -156,8 +251,7 @@ class RealBurningProgress:
         self.total_duration = total_duration
         self.start_time = time.time()
         self.last_update = 0
-        self.last_frame = 0
-        self.last_time_update = 0
+        self.last_percent = 0
 
     async def update_from_ffmpeg(self, stderr_line: str):
         """Parse actual progress from FFmpeg stderr"""
@@ -170,69 +264,57 @@ class RealBurningProgress:
             current_time = hours * 3600 + minutes * 60 + seconds
             
             if self.total_duration > 0:
-                percent = (current_time / self.total_duration) * 100
+                percent = min((current_time / self.total_duration) * 100, 99)
             else:
-                percent = 0
+                percent = self.last_percent + 0.1  # Incremental fallback
 
-            # Calculate real speed
-            elapsed = now - self.start_time
-            if elapsed > 0 and current_time > 0:
-                speed_x = current_time / elapsed
-            else:
-                speed_x = 1.0
+            # Only update if significant change or every 10 seconds
+            if (percent - self.last_percent >= 2) or (now - self.last_update >= 10):
+                await self.update_display(percent, current_time)
+                self.last_percent = percent
+                self.last_update = now
 
-            # Only update every 2 seconds to avoid spam
-            if now - self.last_time_update >= 2:
-                await self.update_display(percent, speed_x, current_time)
-                self.last_time_update = now
-
-        # Also check frame progress
-        frame_match = re.search(r'frame=\s*(\d+)', stderr_line)
-        if frame_match:
-            current_frame = int(frame_match.group(1))
-            if current_frame > self.last_frame:
-                self.last_frame = current_frame
-                # Update based on frames if time parsing fails
-                if now - self.last_time_update >= 3:
-                    estimated_percent = min((current_frame / 1000) * 10, 95)  # Rough estimate
-                    await self.update_display(estimated_percent, 1.0, 0)
-
-    async def update_display(self, percent: float, speed_x: float, current_time: float):
+    async def update_display(self, percent: float, current_time: float):
         """Update the progress display"""
-        percent = min(percent, 99.9)  # Never show 100% until done
-        
         elapsed = time.time() - self.start_time
-        if percent > 0 and speed_x > 0:
-            remaining_time = (self.total_duration - current_time) / speed_x if current_time > 0 else 0
-            eta = format_time(max(0, remaining_time))
+        
+        # Calculate real speed and ETA
+        if current_time > 0 and elapsed > 0:
+            speed_x = current_time / elapsed
+            if speed_x > 0:
+                remaining_time = (self.total_duration - current_time) / speed_x
+                eta = format_time(max(0, remaining_time))
+            else:
+                eta = "calculating..."
         else:
+            speed_x = 0.1
             eta = "calculating..."
 
         bar_len = 10
         filled_len = int(bar_len * percent / 100)
         bar = "🔥" * filled_len + "░" * (bar_len - filled_len)
 
-        # Speed status
-        if speed_x > 3.0:
+        # Speed status with realistic expectations
+        if speed_x > 5.0:
             status = "ULTRA BURN"
         elif speed_x > 2.0:
             status = "TURBO BURN"
         elif speed_x > 1.0:
             status = "FAST BURN"
+        elif speed_x > 0.5:
+            status = "NORMAL"
+        elif speed_x > 0.2:
+            status = "SLOW"
         else:
-            status = "BURNING"
+            status = "VERY SLOW"
 
-        # Time info
-        if current_time > 0:
-            time_info = f"({format_time(current_time)}/{format_time(self.total_duration)})"
-        else:
-            time_info = ""
+        time_info = f"({format_time(current_time)}/{format_time(self.total_duration)})"
 
         text = (
             f"⚙️ **{status}** • **{speed_x:.1f}x**\n"
             f"`{bar}` **{percent:.1f}%** {time_info}\n"
             f"⏱️ **ETA:** `{eta}`\n"
-            f"**Burning subtitles...**"
+            f"**Optimized encoding active...**"
         )
 
         try:
@@ -242,10 +324,11 @@ class RealBurningProgress:
 
     async def complete(self):
         """Mark as 100% complete"""
+        total_time = time.time() - self.start_time
         text = (
             f"✅ **PROCESSING COMPLETE!**\n"
             f"`{'🔥' * 10}` **100%**\n"
-            f"⏱️ **Total Time:** {format_time(time.time() - self.start_time)}\n"
+            f"⏱️ **Encoding Time:** {format_time(total_time)}\n"
             f"**Finalizing output...**"
         )
         try:
@@ -311,18 +394,19 @@ class UltraProgress:
 # ---------- BOT COMMANDS ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
+    hw_accel = check_hardware_acceleration()
     welcome_text = (
-        "🚀 **ULTRA FAST SUBTITLE BOT** 🚀\n\n"
-        "⚡ **Now with REAL Progress Tracking!**\n"
-        "• **Actual FFmpeg progress** (no more fake estimates)\n"
-        "• **Optimized encoding** for speed\n"
-        "• **SRT & ASS** subtitle support\n"
-        "• **2GB** max file size\n\n"
-        "📋 **How to use:**\n"
-        "1. Send video file\n"
-        "2. Send subtitle file\n"
-        "3. Watch real progress!\n\n"
-        "🔥 **No more guessing - see actual progress!**"
+        f"🚀 **ULTRA FAST SUBTITLE BOT** 🚀\n\n"
+        f"⚡ **Hardware Acceleration:** `{hw_accel.upper()}`\n"
+        f"• **Optimized for maximum speed**\n"
+        f"• **Hardware encoding when available**\n"
+        f"• **Real progress tracking**\n"
+        f"• **SRT & ASS support**\n\n"
+        f"📋 **How to use:**\n"
+        f"1. Send video file\n"
+        f"2. Send subtitle file\n"
+        f"3. Get fast results!\n\n"
+        f"🔥 **Optimized for speed!**"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -334,31 +418,38 @@ async def start(client: Client, message: Message):
 
 @app.on_message(filters.command("help"))
 async def help_command(client: Client, message: Message):
+    hw_accel = check_hardware_acceleration()
     help_text = (
-        "🆘 **ULTRA FAST GUIDE**\n\n"
+        "🆘 **SPEED OPTIMIZED GUIDE**\n\n"
+        f"**Hardware:** {hw_accel.upper()}\n"
         "**Format:** Any → MP4\n"
         "**Subtitles:** SRT, ASS\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
-        "**NEW:** Real progress tracking from FFmpeg!\n\n"
+        "**Speed Optimizations:**\n"
+        "• Hardware encoding (NVENC/VAAPI/QSV)\n"
+        "• Ultrafast software presets\n"
+        "• Multi-threaded processing\n\n"
         "**Commands:**\n"
         "`/start` - Start bot\n"
         "`/help` - This guide\n"
         "`/cancel` - Cancel operation\n"
         "`/status` - Check bot status\n\n"
-        "🚀 **Experience real progress tracking!**"
+        "🚀 **Maximum speed optimization active!**"
     )
     await message.reply_text(help_text)
 
 @app.on_message(filters.command("status"))
 async def status_command(client: Client, message: Message):
+    hw_accel = check_hardware_acceleration()
     active_with_progress = sum(1 for data in user_data.values() if data.get("processing"))
     status_text = (
         "🤖 **Bot Status**\n\n"
+        f"**Hardware:** {hw_accel.upper()}\n"
         f"**Active Sessions:** {len(user_data)}\n"
         f"**Processing Now:** {active_with_progress}\n"
         f"**Max File Size:** {human_readable(MAX_FILE_SIZE)}\n"
         f"**Workers:** {WORKERS}\n\n"
-        "✅ **Bot with REAL progress tracking!**"
+        "✅ **Speed-optimized encoding active!**"
     )
     await message.reply_text(status_text)
 
@@ -390,7 +481,7 @@ async def handle_callbacks(client, callback_query):
     
     await callback_query.answer()
 
-# ---------- FILE HANDLERS ----------
+# ---------- OPTIMIZED FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -441,14 +532,14 @@ async def handle_file(client: Client, message: Message):
         avg_speed = file_obj.file_size / download_time / (1024 * 1024) if download_time > 0 else 0
 
         duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
-        width, height = await asyncio.get_event_loop().run_in_executor(executor, get_video_resolution, video_path)
+        codec = await asyncio.get_event_loop().run_in_executor(executor, get_video_codec, video_path)
 
         user_data[chat_id] = {
             "video_path": video_path,
             "original_filename": safe_filename,
             "file_size": file_obj.file_size,
             "duration": duration,
-            "resolution": f"{width}x{height}",
+            "codec": codec,
             "start_time": time.time(),
             "processing": False
         }
@@ -457,7 +548,7 @@ async def handle_file(client: Client, message: Message):
             f"✅ **DOWNLOAD COMPLETE!**\n\n"
             f"📊 **Video Info:**\n"
             f"• Duration: `{format_time(duration)}`\n"
-            f"• Resolution: `{width}x{height}`\n"
+            f"• Codec: `{codec}`\n"
             f"• Size: `{human_readable(file_obj.file_size)}`\n\n"
             f"🚀 **Speed:** {avg_speed:.1f} MB/s\n"
             f"⏱️ **Time:** {format_time(download_time)}\n\n"
@@ -511,6 +602,8 @@ async def handle_subtitle(client: Client, message: Message):
 
         video_path = user_data[chat_id]["video_path"]
         original_filename = user_data[chat_id]["original_filename"]
+        duration = user_data[chat_id]["duration"]
+        
         base_name = os.path.splitext(original_filename)[0]
         output_filename = f"{base_name}_burned_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
@@ -519,45 +612,28 @@ async def handle_subtitle(client: Client, message: Message):
         user_data[chat_id]["subtitle_path"] = sub_path
         user_data[chat_id]["output_path"] = output_file
 
-        duration = user_data[chat_id]["duration"]
-
-        # Use REAL progress tracking
-        burn_progress = RealBurningProgress(client, chat_id, status_msg.id, base_name, duration)
-        await status_msg.edit_text("🔥 **STARTING ULTRA BURN**\n`░░░░░░░░░░` **0%**\n**Reading FFmpeg progress...**")
+        # Get optimized FFmpeg command
+        ffmpeg_cmd = get_optimized_ffmpeg_command(video_path, sub_path, output_file, sub_ext, duration)
+        
+        hw_accel = check_hardware_acceleration()
+        await status_msg.edit_text(
+            f"🔥 **STARTING OPTIMIZED BURN**\n"
+            f"`░░░░░░░░░░` **0%**\n"
+            f"**Hardware:** {hw_accel.upper()}\n"
+            f"**Estimated:** {format_time(duration / 2)}"
+        )
 
         burn_start = time.time()
+        burn_progress = RealBurningProgress(client, chat_id, status_msg.id, base_name, duration)
 
-        # Optimized FFmpeg command for speed
-        if sub_ext == '.ass':
-            vf_filter = f"ass={shlex.quote(sub_path)}"
-        else:
-            vf_filter = f"subtitles={shlex.quote(sub_path)}"
-
-        cmd = [
-            'ffmpeg',
-            '-hide_banner',
-            '-i', video_path,
-            '-vf', vf_filter,
-            '-c:v', 'libx264',
-            '-preset', 'fast',  # Faster preset
-            '-crf', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-movflags', '+faststart',
-            '-threads', '0',
-            '-progress', 'pipe:1',  # Enable progress output
-            '-y',
-            output_file
-        ]
-
-        logger.info("Starting ffmpeg with real progress tracking")
+        logger.info(f"Running optimized FFmpeg: {' '.join(ffmpeg_cmd)}")
         process = await asyncio.create_subprocess_exec(
-            *cmd,
+            *ffmpeg_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
 
-        # Read stderr for progress in real-time
+        # Read stderr for progress
         async def read_progress():
             while True:
                 line = await process.stderr.readline()
@@ -598,12 +674,13 @@ async def handle_subtitle(client: Client, message: Message):
             chat_id,
             output_file,
             caption=(
-                f"✅ **REAL-TIME PROCESSING COMPLETE!**\n\n"
+                f"✅ **OPTIMIZED PROCESSING COMPLETE!**\n\n"
                 f"📊 **Results:**\n"
+                f"• Encoding: `{hw_accel.upper()}`\n"
                 f"• Total Time: `{format_time(burn_time)}`\n"
                 f"• Output Size: `{human_readable(output_size)}`\n"
-                f"• Real Progress: `Enabled`\n\n"
-                f"🔥 **Accurate progress tracking!**"
+                f"• Speed: `{duration/burn_time:.1f}x` realtime\n\n"
+                f"🔥 **Hardware-accelerated encoding!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
@@ -613,7 +690,7 @@ async def handle_subtitle(client: Client, message: Message):
         await status_msg.edit_text(
             f"🎉 **PROCESSING COMPLETE!**\n\n"
             f"✅ **Total Time:** {format_time(total_time)}\n"
-            f"🚀 **Real progress tracking worked!**"
+            f"🚀 **Optimized encoding successful!**"
         )
 
         # Cleanup
@@ -643,10 +720,10 @@ async def handle_subtitle(client: Client, message: Message):
             await status_msg.edit_text(
                 f"❌ **PROCESSING FAILED!**\n\n"
                 f"`{html.escape(error_msg)}`\n\n"
-                f"💡 **For large files:**\n"
-                f"• Try smaller files first\n"
+                f"💡 **Speed Tips:**\n"
+                f"• Try shorter videos first\n"
                 f"• Use MP4 format\n"
-                f"• Check subtitle timing\n"
+                f"• Lower resolution = faster\n"
                 f"• Use /cancel to restart"
             )
         except Exception:
@@ -663,13 +740,15 @@ async def handle_subtitle(client: Client, message: Message):
 
 # ---------- BOT STARTUP ----------
 if __name__ == "__main__":
+    hw_accel = check_hardware_acceleration()
     print("=" * 60)
-    print("🚀 ULTRA FAST SUBTITLE BOT - REAL PROGRESS TRACKING")
+    print("🚀 ULTRA FAST SUBTITLE BOT - SPEED OPTIMIZED")
     print("=" * 60)
-    print(f"⚡ Max Size: {human_readable(MAX_FILE_SIZE)}")
+    print(f"⚡ Hardware Acceleration: {hw_accel.upper()}")
+    print(f"📦 Max Size: {human_readable(MAX_FILE_SIZE)}")
     print(f"🔥 Workers: {WORKERS}")
     print(f"🏥 Health Port: {HEALTH_PORT}")
-    print("📦 Features: Real FFmpeg progress, SRT/ASS support")
+    print("🎯 Features: Hardware encoding, Speed optimization")
     print("=" * 60)
 
     try:
