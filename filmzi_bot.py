@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 UNIVERSAL Subtitle Burner - SUPPORTS ALL LANGUAGES
-Works with Sinhala, Arabic, Chinese, Japanese, Korean, Hindi, etc.
+Updated for latest package versions and maximum compatibility
 """
 
 from pyrogram import Client, filters
@@ -128,7 +128,6 @@ def get_video_duration(file_path: str) -> float:
 def detect_subtitle_encoding(file_path: str) -> str:
     """Detect subtitle file encoding"""
     try:
-        # Try to detect encoding
         import chardet
         with open(file_path, 'rb') as f:
             raw_data = f.read()
@@ -143,7 +142,16 @@ def detect_subtitle_encoding(file_path: str) -> str:
     except Exception as e:
         logger.warning(f"Encoding detection failed: {e}")
     
-    # Fallback encodings for different languages
+    # Fallback encodings
+    fallback_encodings = ['utf-8', 'utf-16', 'iso-8859-1', 'windows-1252']
+    for encoding in fallback_encodings:
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                f.read()
+            return encoding
+        except:
+            continue
+    
     return 'utf-8'
 
 def convert_subtitle_to_utf8(subtitle_path: str) -> str:
@@ -168,19 +176,17 @@ def convert_subtitle_to_utf8(subtitle_path: str) -> str:
 
 def get_universal_font_path():
     """Get a font that supports all languages"""
-    # Common fonts that support multiple languages
     universal_fonts = [
         # Linux fonts
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
         '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
         '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
-        # Windows fonts (if using Wine)
-        '/usr/share/windows/fonts/arial.ttf',
-        # Android fonts
-        '/system/fonts/NotoSans-Regular.ttf',
-        # Google Noto fonts (best for international)
         '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
         '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        # Windows fonts (if using Wine)
+        '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf',
+        # Android fonts
+        '/system/fonts/NotoSans-Regular.ttf',
     ]
     
     for font_path in universal_fonts:
@@ -188,8 +194,8 @@ def get_universal_font_path():
             logger.info(f"Using universal font: {font_path}")
             return font_path
     
-    logger.warning("No universal font found, using fallback")
-    return "Arial"  # Fallback to Arial
+    logger.warning("No universal font found, using Arial fallback")
+    return "Arial"
 
 def sanitize_filename(filename: str) -> str:
     return re.sub(r'[^\w\-_. ]', '', filename)
@@ -200,38 +206,37 @@ def get_universal_ffmpeg_command(video_path: str, subtitle_path: str, output_pat
     
     # Convert subtitle to UTF-8 if needed
     if sub_ext in ['.srt', '.ass', '.ssa']:
-        subtitle_path = convert_subtitle_to_utf8(subtitle_path)
+        converted_path = convert_subtitle_to_utf8(subtitle_path)
+        if converted_path != subtitle_path:
+            subtitle_path = converted_path
     
     # Get universal font
     font_path = get_universal_font_path()
     
     # Universal subtitle styles for all languages
     if sub_ext == '.ass':
-        # For ASS files, use the built-in styling
         vf_filter = f"ass={shlex.quote(subtitle_path)}"
     else:
-        # For SRT and other formats, apply universal styling
         style_options = [
             f"Fontname={font_path}",
-            "FontSize=24",
-            "PrimaryColour=&H00FFFFFF",      # White text
-            "OutlineColour=&H00000000",      # Black outline
-            "BackColour=&H80000000",         # Semi-transparent background
+            "FontSize=20",
+            "PrimaryColour=&H00FFFFFF",
+            "OutlineColour=&H00000000", 
+            "BackColour=&H80000000",
             "Bold=0",
             "Italic=0",
             "BorderStyle=1",
             "Outline=1",
             "Shadow=1",
             "MarginL=10",
-            "MarginR=10",
-            "MarginV=20",
-            "Alignment=2"  # Center bottom
+            "MarginR=10", 
+            "MarginV=30",
+            "Alignment=2"
         ]
         style_string = ','.join(style_options)
-        
         vf_filter = f"subtitles={shlex.quote(subtitle_path)}:force_style='{style_string}'"
     
-    # Universal encoding settings
+    # Optimized encoding settings
     return [
         'ffmpeg', '-hide_banner', '-y',
         '-i', video_path,
@@ -239,7 +244,7 @@ def get_universal_ffmpeg_command(video_path: str, subtitle_path: str, output_pat
         '-c:v', 'libx264',
         '-preset', 'fast',
         '-crf', '23',
-        '-c:a', 'copy',  # Copy audio for speed
+        '-c:a', 'copy',
         '-movflags', '+faststart',
         '-threads', '0',
         output_path
@@ -258,10 +263,8 @@ class UniversalProgress:
         self.last_percent = 0
 
     async def update_from_ffmpeg(self, stderr_line: str):
-        """Parse actual progress from FFmpeg stderr"""
         now = time.time()
         
-        # Parse time from ffmpeg output
         time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', stderr_line)
         if time_match:
             hours, minutes, seconds = map(float, time_match.groups())
@@ -278,7 +281,6 @@ class UniversalProgress:
                 self.last_update = now
 
     async def update_display(self, percent: float, current_time: float):
-        """Update the progress display"""
         elapsed = time.time() - self.start_time
         
         if current_time > 0 and elapsed > 0:
@@ -299,7 +301,7 @@ class UniversalProgress:
         if speed_x > 5.0:
             status = "ULTRA FAST"
         elif speed_x > 2.0:
-            status = "VERY FAST"
+            status = "VERY FAST" 
         elif speed_x > 1.0:
             status = "FAST"
         elif speed_x > 0.5:
@@ -322,7 +324,6 @@ class UniversalProgress:
             logger.debug(f"Progress update failed: {e}")
 
     async def complete(self):
-        """Mark as 100% complete"""
         total_time = time.time() - self.start_time
         text = (
             f"✅ **UNIVERSAL PROCESSING COMPLETE!**\n"
@@ -392,7 +393,7 @@ class DownloadProgress:
 
 # ---------- BOT COMMANDS ----------
 @app.on_message(filters.command("start"))
-async def start(client: Client, message: Message):
+async def start(client: Message):
     welcome_text = (
         "🌍 **UNIVERSAL SUBTITLE BOT** 🌍\n\n"
         "✅ **Supports ALL Languages:**\n"
@@ -412,7 +413,7 @@ async def start(client: Client, message: Message):
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📖 Help", callback_data="help"),
-         InlineKeyboardButton("🌍 Supported Languages", callback_data="languages")]
+         InlineKeyboardButton("🌍 Languages", callback_data="languages")]
     ])
     
     await message.reply_text(welcome_text, reply_markup=keyboard)
@@ -424,13 +425,12 @@ async def help_command(client: Client, message: Message):
         "**Supported Languages:** ALL\n"
         "**Formats:** SRT, ASS, SSA\n"
         "**Encoding:** Automatic UTF-8 conversion\n"
-        "**Fonts:** Universal font support\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
         "**Features:**\n"
         "• Automatic encoding detection\n"
         "• Universal font rendering\n"
-        "• Right-to-left support (Arabic, Hebrew)\n"
-        "• Complex scripts (Sinhala, Thai, etc.)\n\n"
+        "• Right-to-left support\n"
+        "• Complex scripts support\n\n"
         "**Commands:**\n"
         "`/start` - Start bot\n"
         "`/help` - This guide\n"
@@ -446,14 +446,15 @@ async def languages_command(client: Client, message: Message):
         "🌍 **SUPPORTED LANGUAGES** 🌍\n\n"
         "**South Asian:**\n"
         "• Sinhala (සිංහල)\n• Hindi (हिन्दी)\n• Tamil (தமிழ்)\n• Bengali (বাংলা)\n"
-        "• Urdu (اردو)\n• Punjabi (ਪੰਜਾਬੀ)\n• Marathi (मराठी)\n• Gujarati (ગુજરાતી)\n\n"
+        "• Urdu (اردو)\n• Punjabi (ਪੰਜਾਬੀ)\n\n"
         "**East Asian:**\n"
         "• Chinese (中文)\n• Japanese (日本語)\n• Korean (한국어)\n"
         "• Thai (ไทย)\n• Vietnamese (Tiếng Việt)\n\n"
         "**Middle Eastern:**\n"
-        "• Arabic (العربية)\n• Hebrew (עברית)\n• Persian (فارسی)\n• Turkish (Türkçe)\n\n"
-        "**European:**\n"
-        "• English\n• Spanish\n• French\n• German\n• Russian\n• Greek\n• And many more!\n\n"
+        "• Arabic (العربية)\n• Hebrew (עברית)\n• Persian (فارسی)\n\n"
+        "**European & More:**\n"
+        "• English, Spanish, French, German, Russian, Greek\n"
+        "• And all other Unicode languages!\n\n"
         "✅ **All Unicode languages supported!**"
     )
     await message.reply_text(languages_text)
@@ -483,8 +484,6 @@ async def handle_callbacks(client, callback_query):
         await help_command(client, callback_query.message)
     elif data == "languages":
         await languages_command(client, callback_query.message)
-    elif data == "cancel":
-        await cancel_operation(client, callback_query.message)
     
     await callback_query.answer()
 
@@ -617,7 +616,6 @@ async def handle_subtitle(client: Client, message: Message):
         user_data[chat_id]["subtitle_path"] = sub_path
         user_data[chat_id]["output_path"] = output_file
 
-        # Get UNIVERSAL FFmpeg command
         ffmpeg_cmd = get_universal_ffmpeg_command(video_path, sub_path, output_file, sub_ext)
         
         await status_msg.edit_text(
@@ -638,7 +636,6 @@ async def handle_subtitle(client: Client, message: Message):
             stderr=asyncio.subprocess.PIPE
         )
 
-        # Read stderr for progress
         async def read_progress():
             while True:
                 line = await process.stderr.readline()
@@ -671,7 +668,6 @@ async def handle_subtitle(client: Client, message: Message):
 
         output_size = os.path.getsize(output_file)
 
-        # Upload
         await status_msg.edit_text("🌍 **UNIVERSAL UPLOAD**")
         upload_progress = DownloadProgress(client, chat_id, status_msg.id, output_filename, "UPLOAD")
 
@@ -699,19 +695,16 @@ async def handle_subtitle(client: Client, message: Message):
             f"🚀 **Ready for next file!**"
         )
 
-        # Cleanup
         await asyncio.sleep(2)
         try:
             await status_msg.delete()
         except Exception:
             pass
 
-        # Clean up all files including converted subtitles
         for file_path in [video_path, sub_path, output_file]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                # Also remove converted subtitle if it exists
                 converted_path = file_path + '.utf8'
                 if os.path.exists(converted_path):
                     os.remove(converted_path)
@@ -746,7 +739,6 @@ async def handle_subtitle(client: Client, message: Message):
                 if file_path and os.path.exists(file_path):
                     try:
                         os.remove(file_path)
-                        # Also remove converted subtitle
                         converted_path = file_path + '.utf8'
                         if os.path.exists(converted_path):
                             os.remove(converted_path)
