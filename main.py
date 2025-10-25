@@ -559,7 +559,8 @@ async def handle_subtitle(client: Client, message: Message):
             "╔═══════════════════════╗\n"
             "║ 🔍 **ANALYZING** 🔍 ║\n"
             "╚═══════════════════════╝\n\n"
-            "📊 **Analyzing video properties...**"
+            "📊 **Analyzing video properties...**\n"
+            "🗑️ **Removing thumbnails & metadata...**"
         )
         duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
 
@@ -568,12 +569,14 @@ async def handle_subtitle(client: Client, message: Message):
             "╔═══════════════════════════╗\n"
             "║ 🔥 **ULTRA BURN START** 🔥 ║\n"
             "╚═══════════════════════════╝\n\n"
-            "⚡ **Initializing encoding engine...**"
+            "⚡ **Initializing encoding engine...**\n"
+            "🗑️ **Stripping all thumbnails...**\n"
+            "📹 **Hard burning subtitles...**"
         )
 
         burn_start = time.time()
 
-        # ULTRA-OPTIMIZED FFmpeg command for maximum speed on large files
+        # ULTRA-OPTIMIZED FFmpeg command - strips ALL thumbnails and metadata
         safe_sub_path = sub_path.replace("'", "\\'")
         
         # Simpler subtitle style for faster processing
@@ -583,10 +586,13 @@ async def handle_subtitle(client: Client, message: Message):
         cmd = [
             'ffmpeg',
             '-hide_banner',
-            '-loglevel', 'error',
+            '-loglevel', 'fatal',  # Only fatal errors
+            '-nostats',
             '-progress', 'pipe:1',
-            '-err_detect', 'ignore_err',  # Ignore corrupted data
-            '-fflags', '+genpts+igndts',  # Generate PTS, ignore DTS errors
+            '-xerror',
+            '-err_detect', 'ignore_err',
+            '-fflags', '+genpts+igndts+discardcorrupt',
+            '-skip_frame', 'noref',
         ]
         
         # Add hardware acceleration input flags
@@ -599,8 +605,12 @@ async def handle_subtitle(client: Client, message: Message):
         
         cmd.extend([
             '-i', video_path,
-            '-map', '0:v:0',  # Only map first video stream
-            '-map', '0:a:0?',  # Map first audio stream if exists (? = optional)
+            # CRITICAL: Only map video and audio, exclude ALL other streams (thumbnails, subtitles, data)
+            '-map', '0:v:0',  # Only first video stream
+            '-map', '0:a:0?',  # Only first audio stream (optional)
+            '-map', '-0:d',  # Explicitly exclude data streams
+            '-map', '-0:t',  # Explicitly exclude attachment streams (thumbnails)
+            '-ignore_unknown',
             '-vf', vf_filter,
         ])
         
@@ -609,7 +619,7 @@ async def handle_subtitle(client: Client, message: Message):
             cmd.extend([
                 '-c:v', HW_ENCODER,
                 '-preset', 'fast' if HW_ENCODER == 'h264_nvenc' else 'veryfast',
-                '-b:v', '5M',  # Bitrate for HW encoders
+                '-b:v', '5M',
             ])
         else:
             cmd.extend([
@@ -620,17 +630,20 @@ async def handle_subtitle(client: Client, message: Message):
             ])
         
         cmd.extend([
-            '-c:a', 'copy',  # Always copy audio for speed
+            '-c:a', 'copy',  # Copy audio for speed
             '-movflags', '+faststart',
             '-threads', '0',
             '-max_muxing_queue_size', '9999',
-            '-map_metadata', '-1',  # Remove metadata (including corrupted thumbnails)
+            '-map_metadata', '-1',  # Strip ALL metadata
+            '-map_chapters', '-1',  # Strip chapters
+            '-disposition:v:0', 'default',  # Mark video as default
+            '-disposition:a:0', 'default',  # Mark audio as default
             '-y',
             output_file
         ])
 
         encoder_name = HW_ENCODER.upper() if HW_ENCODER != 'libx264' else 'CPU'
-        logger.info(f"Starting ultra-optimized ffmpeg with {encoder_name}: %s", ' '.join(shlex.quote(p) for p in cmd))
+        logger.info(f"Starting ultra-optimized ffmpeg with {encoder_name} (thumbnails stripped): %s", ' '.join(shlex.quote(p) for p in cmd))
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -724,8 +737,12 @@ async def handle_subtitle(client: Client, message: Message):
             f"⏱️ **Burn Time:** `{format_time(burn_time)}`\n"
             f"📦 **Output Size:** `{human_readable(output_size)}`\n"
             "🎬 **Format:** MP4 (H.264)\n\n"
-            "🔥 **Subtitles permanently burned!**\n"
-            "⚡ **Processed with ultra-fast engine**\n\n"
+            "🔥 **Features:**\n"
+            "✅ Subtitles permanently hard-burned\n"
+            "✅ All thumbnails removed\n"
+            "✅ All metadata stripped\n"
+            "✅ Clean, optimized output\n\n"
+            "⚡ **Processed with ultra-fast engine**\n"
             "🎯 Ready for your next video! 🎯"
         )
         
