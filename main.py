@@ -131,6 +131,41 @@ def get_video_duration(file_path: str) -> float:
         pass
     return 0.0
 
+def check_hardware_acceleration() -> str:
+    """Check for available hardware acceleration"""
+    try:
+        # Check for NVIDIA GPU
+        result = subprocess.run(['nvidia-smi'], capture_output=True, timeout=2)
+        if result.returncode == 0:
+            logger.info("NVIDIA GPU detected - using h264_nvenc")
+            return 'h264_nvenc'
+    except:
+        pass
+    
+    try:
+        # Check for Intel QuickSync
+        result = subprocess.run(['ffmpeg', '-hide_banner', '-hwaccels'], 
+                              capture_output=True, text=True, timeout=2)
+        if 'qsv' in result.stdout:
+            logger.info("Intel QuickSync detected - using h264_qsv")
+            return 'h264_qsv'
+    except:
+        pass
+    
+    try:
+        # Check for AMD GPU
+        if 'vaapi' in result.stdout:
+            logger.info("VAAPI detected - using h264_vaapi")
+            return 'h264_vaapi'
+    except:
+        pass
+    
+    logger.info("No hardware acceleration - using libx264")
+    return 'libx264'
+
+# Check hardware acceleration once at startup
+HW_ENCODER = check_hardware_acceleration()
+
 # ---------- ENHANCED PROGRESS CLASSES ----------
 class UltraProgress:
     def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, action="DOWNLOAD"):
@@ -223,7 +258,8 @@ class BurningProgress:
 
     async def update(self, percent: float, speed_x: float):
         now = time.time()
-        if now - self.last_update < 0.8 and percent < 100:
+        # More frequent updates for large files to show it's working
+        if now - self.last_update < 0.5 and percent < 100:
             return
         self.last_update = now
         elapsed = now - self.start_time
@@ -237,13 +273,22 @@ class BurningProgress:
         bar_len = 15
         filled_len = int(bar_len * percent / 100)
         
+        # Animated fire effect based on time
+        fire_chars = ["🔥", "🔴", "🟠", "🟡"]
+        fire_idx = int(now * 2) % len(fire_chars)  # Animate at 2 Hz
+        fire_char = fire_chars[fire_idx]
+        
         if percent < 33:
-            bar = "🔥" * filled_len + "⬜" * (bar_len - filled_len)
+            bar = fire_char * filled_len + "⬜" * (bar_len - filled_len)
         elif percent < 66:
             bar = "🟠" * filled_len + "⬜" * (bar_len - filled_len)
         else:
             bar = "🟢" * filled_len + "⬜" * (bar_len - filled_len)
 
+        # Dynamic status with activity indicator
+        spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        spin_char = spinner[int(now * 3) % len(spinner)]
+        
         if speed_x > 4.0:
             status = "🚀 WARP BURN"
             emoji = "🚀⚡💥"
@@ -260,10 +305,14 @@ class BurningProgress:
             status = "🔄 BURNING"
             emoji = "🔄🎬🔥"
 
+        # Show processing indicator
+        processing_text = f"{spin_char} **PROCESSING** {spin_char}"
+        
         text = (
             "╔══════════════════════════╗\n"
             f"║ {emoji} {status} {emoji} ║\n"
             "╠══════════════════════════╣\n"
+            f"║ {processing_text} ║\n"
             f"║ **Encoding Speed:** `{speed_x:.2f}x` ║\n"
             f"║ {bar} ║\n"
             f"║ **Progress:** `{percent:.1f}%` ║\n"
@@ -524,28 +573,59 @@ async def handle_subtitle(client: Client, message: Message):
 
         burn_start = time.time()
 
+        # ULTRA-OPTIMIZED FFmpeg command for maximum speed on large files
         safe_sub_path = sub_path.replace("'", "\\'")
-        vf_filter = f"subtitles='{safe_sub_path}':force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,Outline=1,Shadow=1'"
+        
+        # Simpler subtitle style for faster processing
+        vf_filter = f"subtitles='{safe_sub_path}'"
 
+        # Build command with hardware acceleration if available
         cmd = [
             'ffmpeg',
             '-hide_banner',
             '-loglevel', 'error',
-            '-stats',
+            '-progress', 'pipe:1',
+        ]
+        
+        # Add hardware acceleration input flags
+        if HW_ENCODER == 'h264_nvenc':
+            cmd.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        elif HW_ENCODER == 'h264_qsv':
+            cmd.extend(['-hwaccel', 'qsv'])
+        elif HW_ENCODER == 'h264_vaapi':
+            cmd.extend(['-hwaccel', 'vaapi', '-vaapi_device', '/dev/dri/renderD128'])
+        
+        cmd.extend([
             '-i', video_path,
             '-vf', vf_filter,
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-crf', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k',
+        ])
+        
+        # Configure encoder based on hardware
+        if HW_ENCODER in ['h264_nvenc', 'h264_qsv', 'h264_vaapi']:
+            cmd.extend([
+                '-c:v', HW_ENCODER,
+                '-preset', 'fast' if HW_ENCODER == 'h264_nvenc' else 'veryfast',
+                '-b:v', '5M',  # Bitrate for HW encoders
+            ])
+        else:
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '23',
+                '-tune', 'fastdecode',
+            ])
+        
+        cmd.extend([
+            '-c:a', 'copy',  # Always copy audio for speed
             '-movflags', '+faststart',
             '-threads', '0',
+            '-max_muxing_queue_size', '9999',
             '-y',
             output_file
-        ]
+        ])
 
-        logger.info("Starting optimized ffmpeg: %s", ' '.join(shlex.quote(p) for p in cmd))
+        encoder_name = HW_ENCODER.upper() if HW_ENCODER != 'libx264' else 'CPU'
+        logger.info(f"Starting ultra-optimized ffmpeg with {encoder_name}: %s", ' '.join(shlex.quote(p) for p in cmd))
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -553,20 +633,51 @@ async def handle_subtitle(client: Client, message: Message):
             stderr=asyncio.subprocess.PIPE
         )
 
-        async def simulate_burn_progress():
-            start = time.time()
-            estimated = max(8.0, duration * 0.5)
+        # REAL-TIME progress tracking from FFmpeg output
+        async def track_real_progress():
+            current_time = 0
             while True:
-                elapsed = time.time() - start
-                percent = min((elapsed / estimated) * 100, 99)
-                speed_x = 1.5 + (percent / 100) * 3.0
-                await burn_progress.update(percent, speed_x)
-                await asyncio.sleep(0.8)
-                if process.returncode is not None:
+                try:
+                    if process.stdout:
+                        line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+                        if not line:
+                            break
+                        
+                        line_str = line.decode('utf-8', errors='ignore').strip()
+                        
+                        # Parse FFmpeg progress output
+                        if 'out_time_ms=' in line_str:
+                            try:
+                                time_ms = int(line_str.split('out_time_ms=')[1].split()[0])
+                                current_time = time_ms / 1000000.0  # Convert to seconds
+                            except:
+                                pass
+                        
+                        if duration > 0 and current_time > 0:
+                            percent = min((current_time / duration) * 100, 99)
+                            elapsed = time.time() - burn_start
+                            speed_x = current_time / elapsed if elapsed > 0 else 1.0
+                            await burn_progress.update(percent, speed_x)
+                    
+                    if process.returncode is not None:
+                        break
+                    
+                except asyncio.TimeoutError:
+                    # If no output, simulate progress to show activity
+                    elapsed = time.time() - burn_start
+                    if duration > 0:
+                        estimated_percent = min((elapsed / (duration * 0.4)) * 100, 99)
+                        estimated_speed = 2.0 + (estimated_percent / 50)
+                        await burn_progress.update(estimated_percent, estimated_speed)
+                    continue
+                except Exception as e:
+                    logger.error(f"Progress tracking error: {e}")
                     break
-            await burn_progress.update(100, 4.5)
+            
+            # Finalize to 100%
+            await burn_progress.update(100, 5.0)
 
-        progress_task = asyncio.create_task(simulate_burn_progress())
+        progress_task = asyncio.create_task(track_real_progress())
 
         try:
             await process.wait()
@@ -692,10 +803,10 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"⚡ Max File Size: {human_readable(MAX_FILE_SIZE)} (4GB)")
     print(f"🔥 Worker Threads: {WORKERS}")
-    print(f"💎 Encoding: Ultra-Fast (veryfast preset)")
+    print(f"💎 Hardware Encoder: {HW_ENCODER.upper()}")
     print(f"📦 Output Format: MP4 (H.264 + AAC)")
-    print(f"🚀 Processing: Multi-threaded")
-    print(f"⚡ Upload: Optimized chunks")
+    print(f"🚀 Processing: Multi-threaded + HW Accel")
+    print(f"⚡ Audio: Stream Copy (No Re-encode)")
     print("=" * 60)
     print("✅ All systems ready for warp speed!")
     print("=" * 60)
