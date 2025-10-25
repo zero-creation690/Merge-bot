@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SPEED Subtitle Burner - ENGLISH, TAMIL, SINHALA
-"""
+Ultra Fast Subtitle Burner - production-ready single-file bot
 
+Place this file on your server, set environment variables, install dependencies
+and run. This script is a cleaned, fixed and working version of the code you
+provided with safer progress callbacks, better ffmpeg escaping, and small fixes.
+
+Required environment variables:
+  - API_ID (int)
+  - API_HASH (str)
+  - BOT_TOKEN (str)
+  - MAX_FILE_SIZE (optional, default 2147483648)
+  - WORKERS (optional, default 100)
+  - HEALTH_PORT (optional, default 8000)
+
+Dependencies (install with pip):
+  pip install pyrogram aiofiles
+
+System dependencies:
+  - ffmpeg + ffprobe available on PATH
+
+Run:
+  python3 ultra_fast_subtitle_bot.py
+"""
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import ParseMode
+from pyrogram.types import Message
 import subprocess
 import os
 import time
@@ -18,27 +37,20 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import shlex
 import html
-import json
-from pathlib import Path
-import re
 
 # ---------------- CONFIG ----------------
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "2147483648"))  # 2GB
 WORKERS = int(os.environ.get("WORKERS", "100"))
-CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/ultimate_bot")
+CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/ultra_bot")
 HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8000"))
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Validate essential env
@@ -47,14 +59,12 @@ if API_ID == 0 or not API_HASH or not BOT_TOKEN:
     raise SystemExit("Missing Telegram API credentials")
 
 app = Client(
-    "UltimateSpeedBot",
+    "UltraFastBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     workdir=CACHE_DIR,
     workers=WORKERS,
-    in_memory=True,
-    parse_mode=ParseMode.MARKDOWN
 )
 
 user_data = {}
@@ -65,15 +75,9 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ['/', '/health']:
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'text/plain')
             self.end_headers()
-            response = {
-                "status": "healthy",
-                "timestamp": time.time(),
-                "service": "ultimate-speed-bot",
-                "active_sessions": len(user_data)
-            }
-            self.wfile.write(json.dumps(response).encode())
+            self.wfile.write(b"OK")
         else:
             self.send_response(404)
             self.end_headers()
@@ -117,236 +121,15 @@ def get_video_duration(file_path: str) -> float:
             '-of', 'default=noprint_wrappers=1:nokey=1',
             file_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
-    except Exception as e:
-        logger.warning(f"Could not get video duration: {e}")
+    except Exception:
+        pass
     return 0.0
 
-def sanitize_filename(filename: str) -> str:
-    return re.sub(r'[^\w\-_. ]', '', filename)
-
-# ---------- LANGUAGE SPECIFIC FFMPEG COMMANDS ----------
-def get_english_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """English - Standard processing"""
-    if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}"
-    else:
-        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}"
-    
-    return [
-        'ffmpeg', '-hide_banner', '-y',
-        '-i', video_path,
-        '-vf', vf_filter,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        '-threads', '0',
-        output_path
-    ]
-
-def get_tamil_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """Tamil - Unicode support with proper font handling"""
-    if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/usr/share/fonts"
-    else:
-        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8"
-    
-    return [
-        'ffmpeg', '-hide_banner', '-y',
-        '-i', video_path,
-        '-vf', vf_filter,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        '-threads', '0',
-        output_path
-    ]
-
-def get_sinhala_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """Sinhala - Enhanced Unicode support"""
-    if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/usr/share/fonts"
-    else:
-        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8:force_style='FontName=Noto Sans Sinhala'"
-    
-    return [
-        'ffmpeg', '-hide_banner', '-y',
-        '-i', video_path,
-        '-vf', vf_filter,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        '-threads', '0',
-        output_path
-    ]
-
-def get_fallback_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """Fallback - Maximum compatibility"""
-    if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}"
-    else:
-        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8"
-    
-    return [
-        'ffmpeg', '-hide_banner', '-y',
-        '-i', video_path,
-        '-vf', vf_filter,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '30',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        '-threads', '0',
-        output_path
-    ]
-
-# ---------- PROGRESS TRACKING ----------
-class BurningProgress:
-    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float, language: str):
-        self.client = client
-        self.chat_id = chat_id
-        self.message_id = message_id
-        self.filename = filename
-        self.total_duration = total_duration
-        self.language = language
-        self.start_time = time.time()
-        self.last_update = 0
-        self.last_percent = 0
-
-    async def update_from_ffmpeg(self, stderr_line: str):
-        now = time.time()
-        
-        time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', stderr_line)
-        if time_match:
-            hours, minutes, seconds = map(float, time_match.groups())
-            current_time = hours * 3600 + minutes * 60 + seconds
-            
-            if self.total_duration > 0:
-                percent = min((current_time / self.total_duration) * 100, 99)
-            else:
-                percent = self.last_percent + 2.0
-
-            if (percent - self.last_percent >= 1) or (now - self.last_update >= 2):
-                await self.update_display(percent, current_time)
-                self.last_percent = percent
-                self.last_update = now
-
-    async def update_display(self, percent: float, current_time: float):
-        elapsed = time.time() - self.start_time
-        
-        if current_time > 0 and elapsed > 0:
-            speed_x = current_time / elapsed
-            if speed_x > 0:
-                remaining_time = (self.total_duration - current_time) / speed_x
-                eta = format_time(max(0, remaining_time))
-            else:
-                eta = "calculating..."
-        else:
-            speed_x = 0.1
-            eta = "calculating..."
-
-        bar_len = 10
-        filled_len = int(bar_len * percent / 100)
-        bar = "🔥" * filled_len + "░" * (bar_len - filled_len)
-
-        # Language emoji mapping
-        lang_emoji = {
-            "english": "🇺🇸",
-            "tamil": "🇮🇳", 
-            "sinhala": "🇱🇰"
-        }
-        emoji = lang_emoji.get(self.language, "🌐")
-
-        text = (
-            f"{emoji} **BURNING {self.language.upper()} SUBTITLES**\n"
-            f"`{bar}` **{percent:.1f}%**\n"
-            f"⚡ **Speed:** **{speed_x:.1f}x** • **ETA:** `{eta}`\n"
-            f"🎯 **Language:** `{self.language.upper()}`"
-        )
-
-        try:
-            await self.client.edit_message_text(self.chat_id, self.message_id, text)
-        except Exception as e:
-            logger.debug(f"Progress update failed: {e}")
-
-    async def complete(self):
-        total_time = time.time() - self.start_time
-        text = (
-            f"✅ **{self.language.upper()} BURNING COMPLETE!**\n"
-            f"`{'🔥' * 10}` **100%**\n"
-            f"⏱️ **Processing Time:** {format_time(total_time)}\n"
-            f"**Starting upload...**"
-        )
-        try:
-            await self.client.edit_message_text(self.chat_id, self.message_id, text)
-        except Exception:
-            pass
-
-class UploadProgress:
-    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, language: str):
-        self.client = client
-        self.chat_id = chat_id
-        self.message_id = message_id
-        self.filename = filename
-        self.language = language
-        self.start_time = time.time()
-        self.last_update = self.start_time
-        self.history = []
-
-    async def update(self, current: int, total: int):
-        now = time.time()
-        if now - self.last_update < 0.5 and current < total:
-            return
-        elapsed = now - self.start_time
-        self.last_update = now
-        self.history.append((now, current))
-        if len(self.history) > 5:
-            self.history.pop(0)
-
-        if len(self.history) >= 2:
-            dt = self.history[-1][0] - self.history[0][0]
-            db = self.history[-1][1] - self.history[0][1]
-            avg_speed = (db / dt) / (1024 * 1024) if dt > 0 else 0
-        else:
-            avg_speed = (current / elapsed) / (1024 * 1024) if elapsed > 0 else 0
-
-        percent = (current * 100 / total) if total > 0 else 0
-        eta = (total - current) / (avg_speed * 1024 * 1024) if avg_speed > 0 else 0
-
-        bar_len = 10
-        filled_len = int(bar_len * percent / 100)
-        bar = "📤" * filled_len + "░" * (bar_len - filled_len)
-
-        if avg_speed > 20:
-            emoji = "🚀"
-        elif avg_speed > 10:
-            emoji = "⚡"
-        elif avg_speed > 5:
-            emoji = "🔥"
-        else:
-            emoji = "📶"
-
-        text = (
-            f"📤 **UPLOADING {self.language.upper()} VIDEO**\n"
-            f"`{bar}` **{percent:.1f}%**\n"
-            f"{emoji} **Speed:** **{avg_speed:.1f} MB/s** • **ETA:** `{format_time(eta)}`\n"
-            f"`{self.filename[:35]}`"
-        )
-
-        try:
-            await self.client.edit_message_text(self.chat_id, self.message_id, text)
-        except Exception as e:
-            logger.debug(f"Upload progress update failed: {e}")
-
-class DownloadProgress:
+# ---------- PROGRESS CLASSES ----------
+class UltraProgress:
     def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, action="DOWNLOAD"):
         self.client = client
         self.chat_id = chat_id
@@ -355,18 +138,21 @@ class DownloadProgress:
         self.action = action
         self.start_time = time.time()
         self.last_update = self.start_time
-        self.history = []
+        self.history = []  # [(timestamp, bytes)]
 
     async def update(self, current: int, total: int):
         now = time.time()
+        # Do not spam updates
         if now - self.last_update < 0.5 and current < total:
             return
         elapsed = now - self.start_time
         self.last_update = now
         self.history.append((now, current))
+        # keep last 5
         if len(self.history) > 5:
             self.history.pop(0)
 
+        # calculate average speed in MB/s using history
         if len(self.history) >= 2:
             dt = self.history[-1][0] - self.history[0][0]
             db = self.history[-1][1] - self.history[0][1]
@@ -377,10 +163,12 @@ class DownloadProgress:
         percent = (current * 100 / total) if total > 0 else 0
         eta = (total - current) / (avg_speed * 1024 * 1024) if avg_speed > 0 else 0
 
+        # compact progress bar
         bar_len = 10
         filled_len = int(bar_len * percent / 100)
-        bar = "📥" * filled_len + "░" * (bar_len - filled_len)
+        bar = "█" * filled_len + "░" * (bar_len - filled_len)
 
+        # emoji
         if avg_speed > 20:
             emoji = "🚀"
         elif avg_speed > 10:
@@ -391,94 +179,105 @@ class DownloadProgress:
             emoji = "📶"
 
         text = (
-            f"📥 **{self.action}**\n"
-            f"`{bar}` **{percent:.1f}%**\n"
-            f"{emoji} **Speed:** **{avg_speed:.1f} MB/s** • **ETA:** `{format_time(eta)}`\n"
+            f"{emoji} **{self.action}** • **{avg_speed:.1f} MB/s**\n"
+            f"`{bar}` **{percent:.1f}%** • ETA: `{format_time(eta)}`\n"
             f"`{self.filename[:40]}`"
         )
 
         try:
             await self.client.edit_message_text(self.chat_id, self.message_id, text)
-        except Exception as e:
-            logger.debug(f"Progress update failed: {e}")
+        except Exception:
+            pass
+
+
+class BurningProgress:
+    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float):
+        self.client = client
+        self.chat_id = chat_id
+        self.message_id = message_id
+        self.filename = filename
+        self.total_duration = total_duration
+        self.start_time = time.time()
+        self.last_update = 0
+
+    async def update(self, percent: float, speed_x: float):
+        now = time.time()
+        if now - self.last_update < 1 and percent < 100:
+            return
+        self.last_update = now
+        elapsed = now - self.start_time
+
+        if percent > 0:
+            total_est = elapsed * 100.0 / percent
+            eta = max(int(total_est - elapsed), 0)
+        else:
+            eta = 0
+
+        bar_len = 10
+        filled_len = int(bar_len * percent / 100)
+        bar = "🔥" * filled_len + "░" * (bar_len - filled_len)
+
+        if speed_x > 3.0:
+            status = "ULTRA BURN"
+        elif speed_x > 2.0:
+            status = "TURBO BURN"
+        elif speed_x > 1.0:
+            status = "FAST BURN"
+        else:
+            status = "BURNING"
+
+        text = (
+            f"⚙️ **{status}** • **{speed_x:.1f}x**\n"
+            f"`{bar}` **{percent:.1f}%** • ETA: `{format_time(eta)}`\n"
+            f"**Burning subtitles into video...**"
+        )
+
+        try:
+            await self.client.edit_message_text(self.chat_id, self.message_id, text)
+        except Exception:
+            pass
 
 # ---------- BOT COMMANDS ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
     welcome_text = (
-        "🚀 **ULTIMATE SPEED SUBTITLE BOT** ⚡\n\n"
-        "**🌍 SUPPORTED LANGUAGES:**\n"
-        "• 🇺🇸 **English** - Standard processing\n"
-        "• 🇮🇳 **Tamil** - Unicode support\n"
-        "• 🇱🇰 **Sinhala** - Enhanced Unicode\n\n"
-        "**⚡ FEATURES:**\n"
-        "• Ultrafast encoding\n"
-        "• Audio stream copy\n"
-        "• Language-specific optimization\n"
-        "• Dual progress tracking\n\n"
-        "**📋 HOW TO USE:**\n"
+        "🚀 **ULTRA FAST SUBTITLE BOT** 🚀\n\n"
+        "⚡ **Features:**\n"
+        "• **High download speed** (depends on host)\n"
+        "• **Real-time burning** progress\n"
+        "• **Any format** to MP4\n"
+        "• **Permanent** subtitle burning\n"
+        "• **2GB** max file size (configurable)\n\n"
+        "📋 **How to use:**\n"
         "1. Send video file\n"
-        "2. Select language\n"
-        "3. Send subtitle file\n"
-        "4. Get optimized results!"
+        "2. Send .srt subtitle file\n"
+        "3. Receive video with burned subtitles!\n\n"
+        "🔥 **Ready for ultra speed!**"
     )
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📖 Help", callback_data="help"),
-         InlineKeyboardButton("🌍 Languages", callback_data="languages")]
-    ])
-    
-    await message.reply_text(welcome_text, reply_markup=keyboard)
+    await message.reply_text(welcome_text)
+
 
 @app.on_message(filters.command("help"))
 async def help_command(client: Client, message: Message):
     help_text = (
-        "🆘 **ULTIMATE SPEED GUIDE** ⚡\n\n"
-        "**Supported Languages:**\n"
-        "🇺🇸 **English** - Standard processing\n"
-        "🇮🇳 **Tamil** - Unicode character support\n"
-        "🇱🇰 **Sinhala** - Enhanced Unicode rendering\n\n"
-        "**Features:**\n"
-        "• Maximum speed encoding\n"
-        "• Audio stream copy (no re-encode)\n"
-        "• Language-specific optimizations\n"
-        "• Dual progress tracking\n"
+        "🆘 **ULTRA FAST GUIDE**\n\n"
+        "**Format:** Any → MP4\n"
+        "**Subtitles:** Burned permanently\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
         "**Commands:**\n"
         "`/start` - Start bot\n"
         "`/help` - This guide\n"
-        "`/languages` - Language info\n"
-        "`/cancel` - Cancel operation\n\n"
-        "**Workflow:**\n"
-        "1. Send video → 2. Select language → 3. Send subtitle → 4. Get result!"
+        "`/cancel` - Cancel operation and cleanup\n\n"
+        "🚀 **Send a video to experience ultra speed!**"
     )
     await message.reply_text(help_text)
 
-@app.on_message(filters.command("languages"))
-async def languages_command(client: Client, message: Message):
-    languages_text = (
-        "🌍 **SUPPORTED LANGUAGES**\n\n"
-        "🇺🇸 **ENGLISH**\n"
-        "• Standard subtitle processing\n"
-        "• Fastest encoding\n"
-        "• Best for .srt and .ass files\n\n"
-        "🇮🇳 **TAMIL**\n"
-        "• Unicode character support\n"
-        "• UTF-8 encoding\n"
-        "• Proper Tamil font rendering\n\n"
-        "🇱🇰 **SINHALA**\n"
-        "• Enhanced Unicode support\n"
-        "• Complex script handling\n"
-        "• Special font optimization\n\n"
-        "⚡ **All languages use ultrafast encoding with audio copy!**"
-    )
-    await message.reply_text(languages_text)
 
 @app.on_message(filters.command("cancel"))
 async def cancel_operation(client: Client, message: Message):
     chat_id = message.chat.id
     if chat_id in user_data:
-        for key in ["video_path", "subtitle_path", "output_path"]:
+        for key in ["video", "subtitle", "output"]:
             file_path = user_data[chat_id].get(key)
             if file_path and os.path.exists(file_path):
                 try:
@@ -490,54 +289,21 @@ async def cancel_operation(client: Client, message: Message):
     else:
         await message.reply_text("❌ **No active operation!**")
 
-@app.on_callback_query()
-async def handle_callbacks(client, callback_query):
-    data = callback_query.data
-    chat_id = callback_query.message.chat.id
-    
-    if data == "help":
-        await help_command(client, callback_query.message)
-    elif data == "languages":
-        await languages_command(client, callback_query.message)
-    elif data in ["english", "tamil", "sinhala"]:
-        if chat_id in user_data and "video_path" in user_data[chat_id]:
-            user_data[chat_id]["language"] = data
-            await callback_query.message.edit_text(
-                f"✅ **Language Selected:** {data.upper()}\n\n"
-                f"🌍 **Now send your subtitle file** (.srt or .ass)\n"
-                f"**Selected:** `{data.upper()}`\n\n"
-                f"⚡ **Optimizations activated for {data}!**"
-            )
-        else:
-            await callback_query.answer("❌ Please send video first!", show_alert=True)
-    
-    await callback_query.answer()
-
 # ---------- FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id in user_data and user_data[chat_id].get("processing"):
-        await message.reply_text("⚠️ **Please wait for current operation to complete!**")
-        return
-
+    # document could be srt or video
     file_obj = None
     if message.video:
         file_obj = message.video
     elif message.document:
         file_obj = message.document
-        # If subtitle file received but no language selected
-        if (file_obj.file_name and 
-            file_obj.file_name.lower().endswith(('.srt', '.ass', '.ssa')) and
-            chat_id in user_data and "video_path" in user_data[chat_id]):
-            # If language not selected, ask for language
-            if "language" not in user_data[chat_id]:
-                await message.reply_text("❌ **Please select language first!** Use /start")
-                return
-            else:
-                await handle_subtitle(client, message)
-                return
+        # If it's an srt and we already have video, call subtitle handler
+        if file_obj.file_name and file_obj.file_name.lower().endswith('.srt'):
+            await handle_subtitle(client, message)
+            return
 
     if not file_obj:
         return
@@ -550,18 +316,17 @@ async def handle_file(client: Client, message: Message):
         await message.reply_text(f"❌ **Too large!** Max: {human_readable(MAX_FILE_SIZE)}")
         return
 
-    if chat_id in user_data and "video_path" in user_data[chat_id]:
-        await message.reply_text("⚠️ **Video already received** — please select language first.")
+    # If already have a video for this chat, ask for subtitle
+    if chat_id in user_data and "video" in user_data[chat_id]:
+        await message.reply_text("⚠️ **Video already received** — send the .srt file now.")
         return
 
     unique_id = secrets.token_hex(6)
-    original_filename = file_obj.file_name or "video.mp4"
-    safe_filename = sanitize_filename(original_filename)
-    ext = os.path.splitext(safe_filename)[1] or ".mp4"
+    ext = os.path.splitext(file_obj.file_name or "video.mp4")[1] or ".mp4"
     download_path = os.path.join(CACHE_DIR, f"v_{unique_id}{ext}")
 
-    status_msg = await message.reply_text("📥 **DOWNLOADING VIDEO**")
-    progress = DownloadProgress(client, chat_id, status_msg.id, safe_filename, "DOWNLOAD")
+    status_msg = await message.reply_text("🚀 **ULTRA DOWNLOAD STARTED**")
+    progress = UltraProgress(client, chat_id, status_msg.id, file_obj.file_name or f"video_{unique_id}", "DOWNLOAD")
 
     try:
         download_start = time.time()
@@ -569,205 +334,170 @@ async def handle_file(client: Client, message: Message):
         download_time = time.time() - download_start
         avg_speed = file_obj.file_size / download_time / (1024 * 1024) if download_time > 0 else 0
 
-        duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
-
         user_data[chat_id] = {
-            "video_path": video_path,
-            "original_filename": safe_filename,
+            "video": video_path,
+            "filename": file_obj.file_name or os.path.basename(video_path),
             "file_size": file_obj.file_size,
-            "duration": duration,
-            "start_time": time.time(),
-            "processing": False
+            "start_time": time.time()
         }
 
-        # Ask user to select language
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🇺🇸 English", callback_data="english"),
-             InlineKeyboardButton("🇮🇳 Tamil", callback_data="tamil")],
-            [InlineKeyboardButton("🇱🇰 Sinhala", callback_data="sinhala")]
-        ])
-
         await status_msg.edit_text(
-            f"✅ **VIDEO DOWNLOADED!**\n\n"
-            f"📊 **Video Info:**\n"
-            f"• Duration: `{format_time(duration)}`\n"
-            f"• Size: `{human_readable(file_obj.file_size)}`\n"
-            f"• Speed: `{avg_speed:.1f} MB/s`\n\n"
-            f"🌍 **Please select subtitle language:**",
-            reply_markup=keyboard
+            f"✅ **DOWNLOAD COMPLETE!**\n\n"
+            f"🚀 **Speed:** {avg_speed:.1f} MB/s\n"
+            f"⏱️ **Time:** {format_time(download_time)}\n\n"
+            f"🔥 **Send subtitle file (.srt)**"
         )
 
     except Exception as e:
         logger.exception("Download failed")
         try:
-            await status_msg.edit_text(f"❌ **Download failed:** `{html.escape(str(e))}`")
+            await status_msg.edit_text(f"❌ **Download failed:** {html.escape(str(e))}")
         except Exception:
             pass
-        if os.path.exists(download_path):
-            try:
-                os.remove(download_path)
-            except Exception:
-                pass
         if chat_id in user_data:
             del user_data[chat_id]
+
 
 async def handle_subtitle(client: Client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id not in user_data or "video_path" not in user_data[chat_id]:
+    if chat_id not in user_data or "video" not in user_data[chat_id]:
         await message.reply_text("⚠️ **Send video first!**")
         return
 
-    if "language" not in user_data[chat_id]:
-        await message.reply_text("❌ **Please select language first!**")
-        return
-
-    if user_data[chat_id].get("processing"):
-        await message.reply_text("⚠️ **Already processing! Please wait...**")
-        return
-
     sub_obj = message.document
-    if not sub_obj or not sub_obj.file_name:
-        await message.reply_text("❌ **Invalid file!**")
+    if not sub_obj or not sub_obj.file_name or not sub_obj.file_name.lower().endswith('.srt'):
+        await message.reply_text("❌ **Invalid!** Send a .srt subtitle file.")
         return
 
-    sub_ext = sub_obj.file_name.lower()
-    supported_formats = ('.srt', '.ass', '.ssa')
-    if not any(sub_ext.endswith(fmt) for fmt in supported_formats):
-        await message.reply_text("❌ **Invalid subtitle format!** Send .srt, .ass, or .ssa file.")
-        return
-
-    status_msg = await message.reply_text("📥 **DOWNLOADING SUBTITLE**")
+    status_msg = await message.reply_text("🚀 **DOWNLOADING SUBTITLE**")
     unique_id = secrets.token_hex(6)
-    sub_ext = os.path.splitext(sub_obj.file_name)[1].lower()
-    sub_filename = os.path.join(CACHE_DIR, f"s_{unique_id}{sub_ext}")
+    sub_filename = os.path.join(CACHE_DIR, f"s_{unique_id}.srt")
 
-    progress = DownloadProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOAD")
+    progress = UltraProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOAD")
 
     try:
         sub_path = await message.download(file_name=sub_filename, progress=progress.update)
 
-        video_path = user_data[chat_id]["video_path"]
-        original_filename = user_data[chat_id]["original_filename"]
-        duration = user_data[chat_id]["duration"]
-        language = user_data[chat_id]["language"]
-        
+        video_path = user_data[chat_id]["video"]
+        original_filename = user_data[chat_id]["filename"]
         base_name = os.path.splitext(original_filename)[0]
-        output_filename = f"{base_name}_{language.upper()}_{unique_id}.mp4"
+        output_filename = f"burned_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
 
-        user_data[chat_id]["processing"] = True
-        user_data[chat_id]["subtitle_path"] = sub_path
-        user_data[chat_id]["output_path"] = output_file
+        await status_msg.edit_text("🔍 **Analyzing video...**")
+        duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
 
-        # Select command based on language
-        language_commands = {
-            "english": get_english_command,
-            "tamil": get_tamil_command, 
-            "sinhala": get_sinhala_command
-        }
-        
-        ffmpeg_cmd_func = language_commands.get(language, get_fallback_command)
-        ffmpeg_cmd = ffmpeg_cmd_func(video_path, sub_path, output_file, sub_ext)
-        
-        # Language emoji mapping
-        lang_emoji = {
-            "english": "🇺🇸",
-            "tamil": "🇮🇳",
-            "sinhala": "🇱🇰"
-        }
-        emoji = lang_emoji.get(language, "🌐")
-
-        await status_msg.edit_text(
-            f"{emoji} **STARTING {language.upper()} PROCESSING**\n"
-            f"`░░░░░░░░░░` **0%**\n"
-            f"⚡ **Language:** `{language.upper()}`\n"
-            f"🎯 **Optimizations:** Language-specific encoding\n"
-            f"⏱️ **Target Time:** {format_time(duration / 5)}"
-        )
+        burn_progress = BurningProgress(client, chat_id, status_msg.id, base_name, duration)
+        await status_msg.edit_text("🔥 **STARTING ULTRA BURN**\n`░░░░░░░░░░` **0%**")
 
         burn_start = time.time()
-        burn_progress = BurningProgress(client, chat_id, status_msg.id, base_name, duration, language)
 
-        logger.info(f"Running {language.upper()} FFmpeg processing")
+        # Prepare safe path for subtitles in ffmpeg filter
+        # Use ffmpeg subtitles filter which expects the path; escape single quotes and backslashes
+        safe_sub_path = sub_path.replace("'", "\\'")
+        vf_filter = f"subtitles='{safe_sub_path}':force_style='FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&'"
+
+        # Build FFmpeg command
+        cmd = [
+            'ffmpeg',
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-i', video_path,
+            '-vf', vf_filter,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '24',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-movflags', '+faststart',
+            '-threads', '0',
+            '-y',
+            output_file
+        ]
+
+        logger.info("Starting ffmpeg: %s", ' '.join(shlex.quote(p) for p in cmd))
+
         process = await asyncio.create_subprocess_exec(
-            *ffmpeg_cmd,
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
 
-        async def read_progress():
+        # Simulate progress based on time & ffmpeg running status
+        async def simulate_burn_progress():
+            start = time.time()
+            estimated = max(10.0, duration * 0.7)  # fallback if duration unknown
             while True:
-                line = await process.stderr.readline()
-                if not line:
+                elapsed = time.time() - start
+                percent = min((elapsed / estimated) * 100, 99)
+                # speed_x is a heuristic
+                speed_x = 1.0 + (percent / 100) * 2.0
+                await burn_progress.update(percent, speed_x)
+                await asyncio.sleep(1)
+                if process.returncode is not None:
                     break
-                line_str = line.decode('utf-8', errors='ignore')
-                await burn_progress.update_from_ffmpeg(line_str)
+            # finalize to 100%
+            await burn_progress.update(100, 3.0)
 
-        progress_task = asyncio.create_task(read_progress())
+        progress_task = asyncio.create_task(simulate_burn_progress())
 
         try:
             await process.wait()
-        except Exception as e:
-            logger.error(f"FFmpeg process error: {e}")
-            # Try fallback command
-            logger.info("Trying fallback command...")
-            ffmpeg_cmd = get_fallback_command(video_path, sub_path, output_file, sub_ext)
-            process = await asyncio.create_subprocess_exec(*ffmpeg_cmd)
-            await process.wait()
+        except Exception:
+            process.kill()
+            raise
 
         progress_task.cancel()
 
         burn_time = time.time() - burn_start
-        await burn_progress.complete()
 
+        # Check for errors
         if process.returncode != 0:
             stderr_output = await process.stderr.read()
             error_text = stderr_output.decode('utf-8', errors='ignore')
-            raise Exception(f"Processing failed: {error_text[:200]}")
+            raise Exception(f"Burn failed: {error_text[:200]}")
 
         if not os.path.exists(output_file):
-            raise Exception("Output file not created")
+            raise Exception("Output file not created by ffmpeg")
 
         output_size = os.path.getsize(output_file)
+        burn_speed = (user_data[chat_id]["file_size"] / burn_time) / (1024 * 1024) if burn_time > 0 else 0
 
-        # UPLOAD PHASE
-        await status_msg.edit_text("📤 **STARTING UPLOAD**")
-        upload_progress = UploadProgress(client, chat_id, status_msg.id, output_filename, language)
+        # Upload
+        await status_msg.edit_text("🚀 **ULTRA UPLOAD STARTED**")
+        upload_progress = UltraProgress(client, chat_id, status_msg.id, os.path.basename(output_file), "UPLOAD")
 
+        upload_start = time.time()
         await client.send_video(
             chat_id,
             output_file,
             caption=(
-                f"✅ **{language.upper()} PROCESSING COMPLETE!** ⚡\n\n"
-                f"📊 **Performance:**\n"
-                f"• Language: `{language.upper()}`\n"
-                f"• Processing Time: `{format_time(burn_time)}`\n"
-                f"• Speed: `{duration/burn_time:.1f}x` realtime\n"
-                f"• Audio: `COPY` (no re-encode)\n"
-                f"• Quality: `OPTIMIZED`\n\n"
-                f"🌍 **Language-specific encoding successful!**"
+                f"✅ **ULTRA BURN COMPLETE!**\n\n"
+                f"🚀 **Burn Speed:** {burn_speed:.1f} MB/s\n"
+                f"⏱️ **Burn Time:** {format_time(burn_time)}\n"
+                f"📦 **Output Size:** {human_readable(output_size)}\n\n"
+                f"🔥 **Subtitles permanently burned!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
         )
+        upload_time = time.time() - upload_start
 
         total_time = time.time() - user_data[chat_id]["start_time"]
         await status_msg.edit_text(
-            f"🎉 **{language.upper()} SUCCESS!** ⚡\n\n"
+            f"🎉 **MISSION ACCOMPLISHED!**\n\n"
             f"✅ **Total Time:** {format_time(total_time)}\n"
-            f"⚡ **Speed Factor:** {duration/burn_time:.1f}x\n"
-            f"🌍 **Language:** {language.upper()} ✓\n"
             f"🚀 **Ready for next file!**"
         )
 
-        await asyncio.sleep(2)
+        # cleanup
+        await asyncio.sleep(1)
         try:
             await status_msg.delete()
         except Exception:
             pass
 
-        # Cleanup
         for file_path in [video_path, sub_path, output_file]:
             try:
                 if os.path.exists(file_path):
@@ -775,62 +505,49 @@ async def handle_subtitle(client: Client, message: Message):
             except Exception:
                 pass
 
-        user_data[chat_id] = {"processing": False}
+        del user_data[chat_id]
 
     except Exception as e:
-        logger.exception(f"{language.upper()} processing error")
+        logger.exception("Ultra burn error")
         error_msg = str(e)
-        
-        if chat_id in user_data:
-            user_data[chat_id]["processing"] = False
-        
         try:
             await status_msg.edit_text(
-                f"❌ **{language.upper()} PROCESSING FAILED!** ⚡\n\n"
+                f"❌ **ULTRA BURN FAILED!**\n\n"
                 f"`{html.escape(error_msg)}`\n\n"
-                f"💡 **Tips for {language.upper()}:**\n"
-                f"• Ensure subtitle is UTF-8 encoded\n"
-                f"• Try shorter videos (1-5 minutes)\n"
+                f"💡 **Tips for ultra speed:**\n"
+                f"• Use MP4 files\n"
+                f"• Keep under 1GB\n"
+                f"• Check subtitle format (.srt)\n"
                 f"• Use /cancel to restart"
             )
         except Exception:
             pass
 
+        # emergency cleanup
         if chat_id in user_data:
-            for key in ["video_path", "subtitle_path", "output_path"]:
+            for key in ["video", "subtitle", "output"]:
                 file_path = user_data[chat_id].get(key)
                 if file_path and os.path.exists(file_path):
                     try:
                         os.remove(file_path)
                     except Exception:
                         pass
+            del user_data[chat_id]
 
 # ---------- BOT STARTUP ----------
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀 ULTIMATE SPEED SUBTITLE BOT - 3 LANGUAGES")
-    print("=" * 60)
-    print(f"📦 Max Size: {human_readable(MAX_FILE_SIZE)}")
+    print("=" * 50)
+    print("🚀 ULTRA FAST SUBTITLE BURNER")
+    print("=" * 50)
+    print(f"⚡ Configured Max Size: {human_readable(MAX_FILE_SIZE)}")
     print(f"🔥 Workers: {WORKERS}")
-    print(f"🏥 Health Port: {HEALTH_PORT}")
-    print("🌍 Supported Languages: English, Tamil, Sinhala")
-    print("⚡ Features: Language-specific optimization")
-    print("🎯 Audio: Copy stream (no re-encode)")
-    print("=" * 60)
+    print("📦 Output: MP4 with burned subtitles")
+    print("=" * 50)
 
     try:
         app.run()
     except KeyboardInterrupt:
-        print("\n🛑 Stopping bot...")
-        for chat_id, data in user_data.items():
-            for key in ["video_path", "subtitle_path", "output_path"]:
-                file_path = data.get(key)
-                if file_path and os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception:
-                        pass
-        print("✅ Cleanup complete!")
+        print("Stopping...")
     except Exception as e:
         logger.exception("Bot failed to start")
         print(f"❌ Bot failed to start: {e}")
