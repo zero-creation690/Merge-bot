@@ -585,6 +585,8 @@ async def handle_subtitle(client: Client, message: Message):
             '-hide_banner',
             '-loglevel', 'error',
             '-progress', 'pipe:1',
+            '-err_detect', 'ignore_err',  # Ignore corrupted data
+            '-fflags', '+genpts+igndts',  # Generate PTS, ignore DTS errors
         ]
         
         # Add hardware acceleration input flags
@@ -597,6 +599,8 @@ async def handle_subtitle(client: Client, message: Message):
         
         cmd.extend([
             '-i', video_path,
+            '-map', '0:v:0',  # Only map first video stream
+            '-map', '0:a:0?',  # Map first audio stream if exists (? = optional)
             '-vf', vf_filter,
         ])
         
@@ -620,6 +624,7 @@ async def handle_subtitle(client: Client, message: Message):
             '-movflags', '+faststart',
             '-threads', '0',
             '-max_muxing_queue_size', '9999',
+            '-map_metadata', '-1',  # Remove metadata (including corrupted thumbnails)
             '-y',
             output_file
         ])
