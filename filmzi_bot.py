@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SPEED Subtitle Burner - AGGRESSIVE OPTIMIZATIONS
-Works on any system with maximum possible speed
+ULTIMATE SPEED Subtitle Burner - ENGLISH, TAMIL, SINHALA
 """
 
 from pyrogram import Client, filters
@@ -128,41 +127,13 @@ def get_video_duration(file_path: str) -> float:
 def sanitize_filename(filename: str) -> str:
     return re.sub(r'[^\w\-_. ]', '', filename)
 
-# ---------- ULTIMATE SPEED FFMPEG COMMANDS ----------
-def get_ultimate_speed_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """ULTIMATE SPEED - Most aggressive optimizations possible"""
-    
-    # FIX FOR SINHALA/UNICODE SUBTITLES - Force UTF-8 encoding and use subtitles filter
+# ---------- LANGUAGE SPECIFIC FFMPEG COMMANDS ----------
+def get_english_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
+    """English - Standard processing"""
     if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/tmp"
+        vf_filter = f"ass={shlex.quote(subtitle_path)}"
     else:
-        # CRITICAL FIX: Force UTF-8 encoding for SRT files and use subtitles filter
-        vf_filter = f"subtitles={shlex.quote(subtitle_path)}:charenc=UTF-8"
-    
-    # ULTIMATE SPEED encoding settings - FASTEST POSSIBLE
-    return [
-        'ffmpeg', '-hide_banner', '-y',
-        '-i', video_path,
-        '-vf', vf_filter,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',          # FASTEST POSSIBLE PRESET
-        '-tune', 'zerolatency',          # Zero latency - fastest
-        '-crf', '32',                    # Balanced CRF for speed and quality
-        '-x264-params', 
-        'keyint=15:min-keyint=15:scenecut=0:bframes=0:ref=1:threads=auto',
-        '-c:a', 'copy',                  # COPY AUDIO - CRITICAL
-        '-movflags', '+faststart',
-        '-threads', '0',                 # Use all threads
-        '-max_muxing_queue_size', '9999',
-        output_path
-    ]
-
-def get_extreme_speed_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """EVEN FASTER - Extreme optimizations"""
-    if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/tmp"
-    else:
-        vf_filter = f"subtitles={shlex.quote(subtitle_path)}:charenc=UTF-8"
+        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}"
     
     return [
         'ffmpeg', '-hide_banner', '-y',
@@ -170,21 +141,19 @@ def get_extreme_speed_command(video_path: str, subtitle_path: str, output_path: 
         '-vf', vf_filter,
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-crf', '35',                    # Higher CRF for speed
-        '-x264-params', 'scenecut=0:bframes=0:ref=1:threads=auto',
+        '-crf', '28',
         '-c:a', 'copy',
         '-movflags', '+faststart',
         '-threads', '0',
         output_path
     ]
 
-def get_lightning_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
-    """LIGHTNING FAST - Minimal viable encoding"""
+def get_tamil_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
+    """Tamil - Unicode support with proper font handling"""
     if sub_ext == '.ass':
-        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/tmp"
+        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/usr/share/fonts"
     else:
-        vf_filter = f"subtitles={shlex.quote(subtitle_path)}:charenc=UTF-8"
+        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8"
     
     return [
         'ffmpeg', '-hide_banner', '-y',
@@ -192,20 +161,62 @@ def get_lightning_command(video_path: str, subtitle_path: str, output_path: str,
         '-vf', vf_filter,
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
-        '-crf', '38',                    # Maximum speed, lower quality
+        '-crf', '28',
         '-c:a', 'copy',
+        '-movflags', '+faststart',
         '-threads', '0',
         output_path
     ]
 
-# ---------- DUAL PROGRESS TRACKING ----------
+def get_sinhala_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
+    """Sinhala - Enhanced Unicode support"""
+    if sub_ext == '.ass':
+        vf_filter = f"ass={shlex.quote(subtitle_path)}:fontsdir=/usr/share/fonts"
+    else:
+        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8:force_style='FontName=Noto Sans Sinhala'"
+    
+    return [
+        'ffmpeg', '-hide_banner', '-y',
+        '-i', video_path,
+        '-vf', vf_filter,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '28',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-threads', '0',
+        output_path
+    ]
+
+def get_fallback_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
+    """Fallback - Maximum compatibility"""
+    if sub_ext == '.ass':
+        vf_filter = f"ass={shlex.quote(subtitle_path)}"
+    else:
+        vf_filter = f"subtitles=filename={shlex.quote(subtitle_path)}:charenc=UTF-8"
+    
+    return [
+        'ffmpeg', '-hide_banner', '-y',
+        '-i', video_path,
+        '-vf', vf_filter,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '30',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-threads', '0',
+        output_path
+    ]
+
+# ---------- PROGRESS TRACKING ----------
 class BurningProgress:
-    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float):
+    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float, language: str):
         self.client = client
         self.chat_id = chat_id
         self.message_id = message_id
         self.filename = filename
         self.total_duration = total_duration
+        self.language = language
         self.start_time = time.time()
         self.last_update = 0
         self.last_percent = 0
@@ -221,9 +232,8 @@ class BurningProgress:
             if self.total_duration > 0:
                 percent = min((current_time / self.total_duration) * 100, 99)
             else:
-                percent = self.last_percent + 2.0  # Fast updates
+                percent = self.last_percent + 2.0
 
-            # Update frequently for better feedback
             if (percent - self.last_percent >= 1) or (now - self.last_update >= 2):
                 await self.update_display(percent, current_time)
                 self.last_percent = percent
@@ -247,27 +257,19 @@ class BurningProgress:
         filled_len = int(bar_len * percent / 100)
         bar = "🔥" * filled_len + "░" * (bar_len - filled_len)
 
-        # Realistic speed display
-        if speed_x > 10.0:
-            status = "LIGHTNING"
-        elif speed_x > 5.0:
-            status = "ULTRA FAST"
-        elif speed_x > 2.0:
-            status = "VERY FAST"
-        elif speed_x > 1.0:
-            status = "FAST"
-        elif speed_x > 0.5:
-            status = "GOOD"
-        else:
-            status = "PROCESSING"
-
-        time_info = f"({format_time(current_time)}/{format_time(self.total_duration)})"
+        # Language emoji mapping
+        lang_emoji = {
+            "english": "🇺🇸",
+            "tamil": "🇮🇳", 
+            "sinhala": "🇱🇰"
+        }
+        emoji = lang_emoji.get(self.language, "🌐")
 
         text = (
-            f"🎬 **BURNING SUBTITLES** - {status}\n"
-            f"`{bar}` **{percent:.1f}%** {time_info}\n"
+            f"{emoji} **BURNING {self.language.upper()} SUBTITLES**\n"
+            f"`{bar}` **{percent:.1f}%**\n"
             f"⚡ **Speed:** **{speed_x:.1f}x** • **ETA:** `{eta}`\n"
-            f"📝 **Encoding:** `ULTRAFAST` + `AUDIO COPY`"
+            f"🎯 **Language:** `{self.language.upper()}`"
         )
 
         try:
@@ -278,7 +280,7 @@ class BurningProgress:
     async def complete(self):
         total_time = time.time() - self.start_time
         text = (
-            f"✅ **BURNING COMPLETE!**\n"
+            f"✅ **{self.language.upper()} BURNING COMPLETE!**\n"
             f"`{'🔥' * 10}` **100%**\n"
             f"⏱️ **Processing Time:** {format_time(total_time)}\n"
             f"**Starting upload...**"
@@ -289,11 +291,12 @@ class BurningProgress:
             pass
 
 class UploadProgress:
-    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str):
+    def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, language: str):
         self.client = client
         self.chat_id = chat_id
         self.message_id = message_id
         self.filename = filename
+        self.language = language
         self.start_time = time.time()
         self.last_update = self.start_time
         self.history = []
@@ -332,7 +335,7 @@ class UploadProgress:
             emoji = "📶"
 
         text = (
-            f"📤 **UPLOADING VIDEO**\n"
+            f"📤 **UPLOADING {self.language.upper()} VIDEO**\n"
             f"`{bar}` **{percent:.1f}%**\n"
             f"{emoji} **Speed:** **{avg_speed:.1f} MB/s** • **ETA:** `{format_time(eta)}`\n"
             f"`{self.filename[:35]}`"
@@ -404,22 +407,25 @@ class DownloadProgress:
 async def start(client: Client, message: Message):
     welcome_text = (
         "🚀 **ULTIMATE SPEED SUBTITLE BOT** ⚡\n\n"
-        "⚡ **AGGRESSIVE OPTIMIZATIONS:**\n"
-        "• **Ultrafast encoding** (fastest possible)\n"
-        "• **Audio stream copy** (no re-encode)\n"
-        "• **Unicode support** (Sinhala, Tamil, etc.)\n"
-        "• **Minimal processing** (max speed)\n"
-        "• **All languages** supported\n\n"
-        "📋 **How to use:**\n"
+        "**🌍 SUPPORTED LANGUAGES:**\n"
+        "• 🇺🇸 **English** - Standard processing\n"
+        "• 🇮🇳 **Tamil** - Unicode support\n"
+        "• 🇱🇰 **Sinhala** - Enhanced Unicode\n\n"
+        "**⚡ FEATURES:**\n"
+        "• Ultrafast encoding\n"
+        "• Audio stream copy\n"
+        "• Language-specific optimization\n"
+        "• Dual progress tracking\n\n"
+        "**📋 HOW TO USE:**\n"
         "1. Send video file\n"
-        "2. Send subtitle file\n"
-        "3. Get ULTIMATE SPEED results!\n\n"
-        "⚡ **Fastest possible processing!**"
+        "2. Select language\n"
+        "3. Send subtitle file\n"
+        "4. Get optimized results!"
     )
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📖 Help", callback_data="help"),
-         InlineKeyboardButton("⚡ Speed Tips", callback_data="speedtips")]
+         InlineKeyboardButton("🌍 Languages", callback_data="languages")]
     ])
     
     await message.reply_text(welcome_text, reply_markup=keyboard)
@@ -428,48 +434,45 @@ async def start(client: Client, message: Message):
 async def help_command(client: Client, message: Message):
     help_text = (
         "🆘 **ULTIMATE SPEED GUIDE** ⚡\n\n"
-        "**Speed:** Maximum possible\n"
-        "**Quality:** Good (optimized for speed)\n"
-        "**Audio:** Copy stream (no re-encode)\n"
-        "**Languages:** ALL supported (including Sinhala)\n"
+        "**Supported Languages:**\n"
+        "🇺🇸 **English** - Standard processing\n"
+        "🇮🇳 **Tamil** - Unicode character support\n"
+        "🇱🇰 **Sinhala** - Enhanced Unicode rendering\n\n"
+        "**Features:**\n"
+        "• Maximum speed encoding\n"
+        "• Audio stream copy (no re-encode)\n"
+        "• Language-specific optimizations\n"
+        "• Dual progress tracking\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
-        "**Speed Techniques:**\n"
-        "• Ultrafast video encoding\n"
-        "• Audio stream copy\n"
-        "• Unicode subtitle support\n"
-        "• Aggressive threading\n\n"
-        "**Expected Speed:** 3-10x realtime\n\n"
         "**Commands:**\n"
         "`/start` - Start bot\n"
         "`/help` - This guide\n"
-        "`/speedtips` - Speed optimization tips\n"
+        "`/languages` - Language info\n"
         "`/cancel` - Cancel operation\n\n"
-        "⚡ **Ultimate speed optimizations active!**"
+        "**Workflow:**\n"
+        "1. Send video → 2. Select language → 3. Send subtitle → 4. Get result!"
     )
     await message.reply_text(help_text)
 
-@app.on_message(filters.command("speedtips"))
-async def speedtips_command(client: Client, message: Message):
-    speedtips_text = (
-        "⚡ **SPEED OPTIMIZATION TIPS** 🚀\n\n"
-        "**For Maximum Speed:**\n"
-        "• Use MP4 videos (fastest processing)\n"
-        "• Keep videos under 10 minutes\n"
-        "• Use 720p instead of 1080p\n"
-        "• UTF-8 encoded subtitle files\n\n"
-        "**Expected Performance:**\n"
-        "• 1-minute video: ~10-30 seconds\n"
-        "• 5-minute video: ~1-2 minutes\n"
-        "• 10-minute video: ~2-4 minutes\n\n"
-        "**Current Optimizations:**\n"
-        "✅ Ultrafast encoding preset\n"
-        "✅ Audio stream copy\n"
-        "✅ Unicode support (Sinhala)\n"
-        "✅ Maximum threading\n"
-        "✅ Minimal processing\n\n"
-        "🚀 **Ultimate speed active!**"
+@app.on_message(filters.command("languages"))
+async def languages_command(client: Client, message: Message):
+    languages_text = (
+        "🌍 **SUPPORTED LANGUAGES**\n\n"
+        "🇺🇸 **ENGLISH**\n"
+        "• Standard subtitle processing\n"
+        "• Fastest encoding\n"
+        "• Best for .srt and .ass files\n\n"
+        "🇮🇳 **TAMIL**\n"
+        "• Unicode character support\n"
+        "• UTF-8 encoding\n"
+        "• Proper Tamil font rendering\n\n"
+        "🇱🇰 **SINHALA**\n"
+        "• Enhanced Unicode support\n"
+        "• Complex script handling\n"
+        "• Special font optimization\n\n"
+        "⚡ **All languages use ultrafast encoding with audio copy!**"
     )
-    await message.reply_text(speedtips_text)
+    await message.reply_text(languages_text)
 
 @app.on_message(filters.command("cancel"))
 async def cancel_operation(client: Client, message: Message):
@@ -494,12 +497,23 @@ async def handle_callbacks(client, callback_query):
     
     if data == "help":
         await help_command(client, callback_query.message)
-    elif data == "speedtips":
-        await speedtips_command(client, callback_query.message)
+    elif data == "languages":
+        await languages_command(client, callback_query.message)
+    elif data in ["english", "tamil", "sinhala"]:
+        if chat_id in user_data and "video_path" in user_data[chat_id]:
+            user_data[chat_id]["language"] = data
+            await callback_query.message.edit_text(
+                f"✅ **Language Selected:** {data.upper()}\n\n"
+                f"🌍 **Now send your subtitle file** (.srt or .ass)\n"
+                f"**Selected:** `{data.upper()}`\n\n"
+                f"⚡ **Optimizations activated for {data}!**"
+            )
+        else:
+            await callback_query.answer("❌ Please send video first!", show_alert=True)
     
     await callback_query.answer()
 
-# ---------- ULTIMATE SPEED FILE HANDLERS ----------
+# ---------- FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -513,11 +527,17 @@ async def handle_file(client: Client, message: Message):
         file_obj = message.video
     elif message.document:
         file_obj = message.document
+        # If subtitle file received but no language selected
         if (file_obj.file_name and 
             file_obj.file_name.lower().endswith(('.srt', '.ass', '.ssa')) and
             chat_id in user_data and "video_path" in user_data[chat_id]):
-            await handle_subtitle(client, message)
-            return
+            # If language not selected, ask for language
+            if "language" not in user_data[chat_id]:
+                await message.reply_text("❌ **Please select language first!** Use /start")
+                return
+            else:
+                await handle_subtitle(client, message)
+                return
 
     if not file_obj:
         return
@@ -531,7 +551,7 @@ async def handle_file(client: Client, message: Message):
         return
 
     if chat_id in user_data and "video_path" in user_data[chat_id]:
-        await message.reply_text("⚠️ **Video already received** — send subtitle file (.srt, .ass, .ssa).")
+        await message.reply_text("⚠️ **Video already received** — please select language first.")
         return
 
     unique_id = secrets.token_hex(6)
@@ -560,14 +580,21 @@ async def handle_file(client: Client, message: Message):
             "processing": False
         }
 
+        # Ask user to select language
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇺🇸 English", callback_data="english"),
+             InlineKeyboardButton("🇮🇳 Tamil", callback_data="tamil")],
+            [InlineKeyboardButton("🇱🇰 Sinhala", callback_data="sinhala")]
+        ])
+
         await status_msg.edit_text(
-            f"✅ **DOWNLOAD COMPLETE!**\n\n"
+            f"✅ **VIDEO DOWNLOADED!**\n\n"
             f"📊 **Video Info:**\n"
             f"• Duration: `{format_time(duration)}`\n"
-            f"• Size: `{human_readable(file_obj.file_size)}`\n\n"
-            f"🚀 **Speed:** {avg_speed:.1f} MB/s\n"
-            f"⏱️ **Time:** {format_time(download_time)}\n\n"
-            f"⚡ **Send subtitle for ULTIMATE SPEED processing!**"
+            f"• Size: `{human_readable(file_obj.file_size)}`\n"
+            f"• Speed: `{avg_speed:.1f} MB/s`\n\n"
+            f"🌍 **Please select subtitle language:**",
+            reply_markup=keyboard
         )
 
     except Exception as e:
@@ -589,6 +616,10 @@ async def handle_subtitle(client: Client, message: Message):
 
     if chat_id not in user_data or "video_path" not in user_data[chat_id]:
         await message.reply_text("⚠️ **Send video first!**")
+        return
+
+    if "language" not in user_data[chat_id]:
+        await message.reply_text("❌ **Please select language first!**")
         return
 
     if user_data[chat_id].get("processing"):
@@ -619,30 +650,46 @@ async def handle_subtitle(client: Client, message: Message):
         video_path = user_data[chat_id]["video_path"]
         original_filename = user_data[chat_id]["original_filename"]
         duration = user_data[chat_id]["duration"]
+        language = user_data[chat_id]["language"]
         
         base_name = os.path.splitext(original_filename)[0]
-        output_filename = f"{base_name}_ULTIMATE_{unique_id}.mp4"
+        output_filename = f"{base_name}_{language.upper()}_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
 
         user_data[chat_id]["processing"] = True
         user_data[chat_id]["subtitle_path"] = sub_path
         user_data[chat_id]["output_path"] = output_file
 
-        # Try ULTIMATE SPEED command first - WITH SINHALA FIX
-        ffmpeg_cmd = get_ultimate_speed_command(video_path, sub_path, output_file, sub_ext)
+        # Select command based on language
+        language_commands = {
+            "english": get_english_command,
+            "tamil": get_tamil_command, 
+            "sinhala": get_sinhala_command
+        }
         
+        ffmpeg_cmd_func = language_commands.get(language, get_fallback_command)
+        ffmpeg_cmd = ffmpeg_cmd_func(video_path, sub_path, output_file, sub_ext)
+        
+        # Language emoji mapping
+        lang_emoji = {
+            "english": "🇺🇸",
+            "tamil": "🇮🇳",
+            "sinhala": "🇱🇰"
+        }
+        emoji = lang_emoji.get(language, "🌐")
+
         await status_msg.edit_text(
-            f"🎬 **STARTING ULTIMATE SPEED PROCESSING**\n"
+            f"{emoji} **STARTING {language.upper()} PROCESSING**\n"
             f"`░░░░░░░░░░` **0%**\n"
-            f"⚡ **Optimizations:** ULTRAFAST + AUDIO COPY\n"
-            f"🌐 **Subtitle Support:** Unicode (Sinhala OK)\n"
-            f"🎯 **Target Time:** {format_time(duration / 5)}"
+            f"⚡ **Language:** `{language.upper()}`\n"
+            f"🎯 **Optimizations:** Language-specific encoding\n"
+            f"⏱️ **Target Time:** {format_time(duration / 5)}"
         )
 
         burn_start = time.time()
-        burn_progress = BurningProgress(client, chat_id, status_msg.id, base_name, duration)
+        burn_progress = BurningProgress(client, chat_id, status_msg.id, base_name, duration, language)
 
-        logger.info(f"Running ULTIMATE SPEED FFmpeg with Unicode support")
+        logger.info(f"Running {language.upper()} FFmpeg processing")
         process = await asyncio.create_subprocess_exec(
             *ffmpeg_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -663,9 +710,9 @@ async def handle_subtitle(client: Client, message: Message):
             await process.wait()
         except Exception as e:
             logger.error(f"FFmpeg process error: {e}")
-            # Try extreme speed fallback
-            logger.info("Trying EXTREME SPEED fallback...")
-            ffmpeg_cmd = get_extreme_speed_command(video_path, sub_path, output_file, sub_ext)
+            # Try fallback command
+            logger.info("Trying fallback command...")
+            ffmpeg_cmd = get_fallback_command(video_path, sub_path, output_file, sub_ext)
             process = await asyncio.create_subprocess_exec(*ffmpeg_cmd)
             await process.wait()
 
@@ -673,13 +720,6 @@ async def handle_subtitle(client: Client, message: Message):
 
         burn_time = time.time() - burn_start
         await burn_progress.complete()
-
-        if process.returncode != 0:
-            # Try lightning speed as last resort
-            logger.info("Trying LIGHTNING SPEED as last resort...")
-            ffmpeg_cmd = get_lightning_command(video_path, sub_path, output_file, sub_ext)
-            process = await asyncio.create_subprocess_exec(*ffmpeg_cmd)
-            await process.wait()
 
         if process.returncode != 0:
             stderr_output = await process.stderr.read()
@@ -691,22 +731,22 @@ async def handle_subtitle(client: Client, message: Message):
 
         output_size = os.path.getsize(output_file)
 
-        # CREATE SEPARATE UPLOAD PROGRESS
+        # UPLOAD PHASE
         await status_msg.edit_text("📤 **STARTING UPLOAD**")
-        upload_progress = UploadProgress(client, chat_id, status_msg.id, output_filename)
+        upload_progress = UploadProgress(client, chat_id, status_msg.id, output_filename, language)
 
         await client.send_video(
             chat_id,
             output_file,
             caption=(
-                f"✅ **ULTIMATE SPEED COMPLETE!** ⚡\n\n"
+                f"✅ **{language.upper()} PROCESSING COMPLETE!** ⚡\n\n"
                 f"📊 **Performance:**\n"
+                f"• Language: `{language.upper()}`\n"
                 f"• Processing Time: `{format_time(burn_time)}`\n"
                 f"• Speed: `{duration/burn_time:.1f}x` realtime\n"
                 f"• Audio: `COPY` (no re-encode)\n"
-                f"• Subtitles: `Unicode Supported`\n"
-                f"• Quality: `GOOD` (speed optimized)\n\n"
-                f"⚡ **Ultimate speed achieved!**"
+                f"• Quality: `OPTIMIZED`\n\n"
+                f"🌍 **Language-specific encoding successful!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
@@ -714,10 +754,10 @@ async def handle_subtitle(client: Client, message: Message):
 
         total_time = time.time() - user_data[chat_id]["start_time"]
         await status_msg.edit_text(
-            f"🎉 **ULTIMATE SPEED SUCCESS!** ⚡\n\n"
+            f"🎉 **{language.upper()} SUCCESS!** ⚡\n\n"
             f"✅ **Total Time:** {format_time(total_time)}\n"
             f"⚡ **Speed Factor:** {duration/burn_time:.1f}x\n"
-            f"🌐 **Unicode Support:** Sinhala ✓\n"
+            f"🌍 **Language:** {language.upper()} ✓\n"
             f"🚀 **Ready for next file!**"
         )
 
@@ -727,6 +767,7 @@ async def handle_subtitle(client: Client, message: Message):
         except Exception:
             pass
 
+        # Cleanup
         for file_path in [video_path, sub_path, output_file]:
             try:
                 if os.path.exists(file_path):
@@ -737,7 +778,7 @@ async def handle_subtitle(client: Client, message: Message):
         user_data[chat_id] = {"processing": False}
 
     except Exception as e:
-        logger.exception("Ultimate speed processing error")
+        logger.exception(f"{language.upper()} processing error")
         error_msg = str(e)
         
         if chat_id in user_data:
@@ -745,12 +786,11 @@ async def handle_subtitle(client: Client, message: Message):
         
         try:
             await status_msg.edit_text(
-                f"❌ **PROCESSING FAILED!** ⚡\n\n"
+                f"❌ **{language.upper()} PROCESSING FAILED!** ⚡\n\n"
                 f"`{html.escape(error_msg)}`\n\n"
-                f"💡 **For maximum speed:**\n"
+                f"💡 **Tips for {language.upper()}:**\n"
+                f"• Ensure subtitle is UTF-8 encoded\n"
                 f"• Try shorter videos (1-5 minutes)\n"
-                f"• Use MP4 format videos\n"
-                f"• Ensure subtitles are UTF-8 encoded\n"
                 f"• Use /cancel to restart"
             )
         except Exception:
@@ -768,14 +808,14 @@ async def handle_subtitle(client: Client, message: Message):
 # ---------- BOT STARTUP ----------
 if __name__ == "__main__":
     print("=" * 60)
-    print("🚀 ULTIMATE SPEED SUBTITLE BOT - FASTEST POSSIBLE")
+    print("🚀 ULTIMATE SPEED SUBTITLE BOT - 3 LANGUAGES")
     print("=" * 60)
     print(f"📦 Max Size: {human_readable(MAX_FILE_SIZE)}")
     print(f"🔥 Workers: {WORKERS}")
     print(f"🏥 Health Port: {HEALTH_PORT}")
-    print("🎯 Features: Ultrafast, Audio copy, Unicode support")
-    print("🌐 Language Support: English, Sinhala, Tamil, etc.")
-    print("⚡ Expected Speed: 3-10x realtime")
+    print("🌍 Supported Languages: English, Tamil, Sinhala")
+    print("⚡ Features: Language-specific optimization")
+    print("🎯 Audio: Copy stream (no re-encode)")
     print("=" * 60)
 
     try:
