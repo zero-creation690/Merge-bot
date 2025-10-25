@@ -141,21 +141,18 @@ class UltraProgress:
         self.action = action
         self.start_time = time.time()
         self.last_update = self.start_time
-        self.history = []  # [(timestamp, bytes)]
+        self.history = []
 
     async def update(self, current: int, total: int):
         now = time.time()
-        # Update faster for better visual feedback
         if now - self.last_update < 0.3 and current < total:
             return
         elapsed = now - self.start_time
         self.last_update = now
         self.history.append((now, current))
-        # keep last 8 for better averaging
         if len(self.history) > 8:
             self.history.pop(0)
 
-        # calculate average speed in MB/s using history
         if len(self.history) >= 2:
             dt = self.history[-1][0] - self.history[0][0]
             db = self.history[-1][1] - self.history[0][1]
@@ -166,11 +163,9 @@ class UltraProgress:
         percent = (current * 100 / total) if total > 0 else 0
         eta = (total - current) / (avg_speed * 1024 * 1024) if avg_speed > 0 else 0
 
-        # Enhanced progress bar with gradient effect
         bar_len = 15
         filled_len = int(bar_len * percent / 100)
         
-        # Multi-level progress indicators
         if percent < 25:
             bar = "🔴" * filled_len + "⚪" * (bar_len - filled_len)
         elif percent < 50:
@@ -180,7 +175,6 @@ class UltraProgress:
         else:
             bar = "🔵" * filled_len + "⚪" * (bar_len - filled_len)
 
-        # Dynamic emoji based on speed
         if avg_speed > 30:
             emoji = "🚀💨"
             status = "HYPER SPEED"
@@ -197,18 +191,17 @@ class UltraProgress:
             emoji = "📡🔄"
             status = "PROCESSING"
 
-        # Enhanced visual layout
         text = (
-            f"╔══════════════════════════╗\n"
+            "╔══════════════════════════╗\n"
             f"║ {emoji} **{status}** {emoji} ║\n"
-            f"╠══════════════════════════╣\n"
+            "╠══════════════════════════╣\n"
             f"║ **{self.action}** • `{avg_speed:.1f} MB/s` ║\n"
             f"║ {bar} ║\n"
             f"║ **Progress:** `{percent:.1f}%` ║\n"
             f"║ **ETA:** `{format_time(eta)}` ║\n"
             f"║ **Elapsed:** `{format_time(elapsed)}` ║\n"
             f"║ **Size:** `{human_readable(current)}/{human_readable(total)}` ║\n"
-            f"╚══════════════════════════╝\n"
+            "╚══════════════════════════╝\n"
             f"📁 `{self.filename[:35]}`"
         )
 
@@ -241,11 +234,9 @@ class BurningProgress:
         else:
             eta = 0
 
-        # Enhanced burning progress bar
         bar_len = 15
         filled_len = int(bar_len * percent / 100)
         
-        # Fire gradient effect for burning
         if percent < 33:
             bar = "🔥" * filled_len + "⬜" * (bar_len - filled_len)
         elif percent < 66:
@@ -253,7 +244,6 @@ class BurningProgress:
         else:
             bar = "🟢" * filled_len + "⬜" * (bar_len - filled_len)
 
-        # Dynamic status based on speed
         if speed_x > 4.0:
             status = "🚀 WARP BURN"
             emoji = "🚀⚡💥"
@@ -271,16 +261,16 @@ class BurningProgress:
             emoji = "🔄🎬🔥"
 
         text = (
-            f"╔══════════════════════════╗\n"
+            "╔══════════════════════════╗\n"
             f"║ {emoji} {status} {emoji} ║\n"
-            f"╠══════════════════════════╣\n"
+            "╠══════════════════════════╣\n"
             f"║ **Encoding Speed:** `{speed_x:.2f}x` ║\n"
             f"║ {bar} ║\n"
             f"║ **Progress:** `{percent:.1f}%` ║\n"
             f"║ **ETA:** `{format_time(eta)}` ║\n"
             f"║ **Elapsed:** `{format_time(elapsed)}` ║\n"
-            f"╚══════════════════════════╝\n"
-            f"🎬 **Burning subtitles permanently...**\n"
+            "╚══════════════════════════╝\n"
+            "🎬 **Burning subtitles permanently...**\n"
             f"📁 `{self.filename[:35]}`"
         )
 
@@ -328,7 +318,7 @@ async def help_command(client: Client, message: Message):
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "📥 **Input:** Any video format\n"
         "📤 **Output:** MP4 with burned subs\n"
-        "📦 **Max Size:** {}\n".format(human_readable(MAX_FILE_SIZE)) +
+        f"📦 **Max Size:** {human_readable(MAX_FILE_SIZE)}\n"
         "⚡ **Processing:** Ultra-fast encoding\n"
         "🔥 **Subtitle:** Permanently burned\n\n"
         "**💡 TIPS FOR BEST SPEED:**\n"
@@ -379,13 +369,11 @@ async def cancel_operation(client: Client, message: Message):
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
 
-    # document could be srt or video
     file_obj = None
     if message.video:
         file_obj = message.video
     elif message.document:
         file_obj = message.document
-        # If it's an srt and we already have video, call subtitle handler
         if file_obj.file_name and file_obj.file_name.lower().endswith('.srt'):
             await handle_subtitle(client, message)
             return
@@ -399,16 +387,15 @@ async def handle_file(client: Client, message: Message):
 
     if file_obj.file_size > MAX_FILE_SIZE:
         await message.reply_text(
-            f"╔═══════════════════════╗\n"
-            f"║ ❌ **FILE TOO LARGE** ❌ ║\n"
-            f"╚═══════════════════════╝\n\n"
+            "╔═══════════════════════╗\n"
+            "║ ❌ **FILE TOO LARGE** ❌ ║\n"
+            "╚═══════════════════════╝\n\n"
             f"📦 **Your file:** {human_readable(file_obj.file_size)}\n"
             f"📊 **Max allowed:** {human_readable(MAX_FILE_SIZE)}\n\n"
-            f"💡 **Tip:** Compress your video first"
+            "💡 **Tip:** Compress your video first"
         )
         return
 
-    # If already have a video for this chat, ask for subtitle
     if chat_id in user_data and "video" in user_data[chat_id]:
         await message.reply_text("⚠️ **Video already received** — send the .srt file now.")
         return
@@ -438,7 +425,6 @@ async def handle_file(client: Client, message: Message):
             "start_time": time.time()
         }
 
-        # Speed category
         if avg_speed > 30:
             speed_status = "🚀 HYPER SPEED"
         elif avg_speed > 20:
@@ -449,28 +435,28 @@ async def handle_file(client: Client, message: Message):
             speed_status = "📶 GOOD SPEED"
 
         await status_msg.edit_text(
-            f"╔════════════════════════════╗\n"
-            f"║ ✅ **DOWNLOAD COMPLETE!** ✅ ║\n"
-            f"╚════════════════════════════╝\n\n"
-            f"📊 **STATISTICS:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            "╔════════════════════════════╗\n"
+            "║ ✅ **DOWNLOAD COMPLETE!** ✅ ║\n"
+            "╚════════════════════════════╝\n\n"
+            "📊 **STATISTICS:**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🚀 **Speed:** `{avg_speed:.1f} MB/s` {speed_status}\n"
             f"⏱️ **Time:** `{format_time(download_time)}`\n"
             f"📦 **Size:** `{human_readable(file_obj.file_size)}`\n\n"
-            f"🔥 **NEXT STEP:**\n"
-            f"📁 **Send your .srt subtitle file**\n\n"
-            f"⚡ Ready for subtitle burning! ⚡"
+            "🔥 **NEXT STEP:**\n"
+            "📁 **Send your .srt subtitle file**\n\n"
+            "⚡ Ready for subtitle burning! ⚡"
         )
 
     except Exception as e:
         logger.exception("Download failed")
         try:
             await status_msg.edit_text(
-                f"╔═══════════════════════╗\n"
-                f"║ ❌ **DOWNLOAD FAILED** ❌ ║\n"
-                f"╚═══════════════════════╝\n\n"
+                "╔═══════════════════════╗\n"
+                "║ ❌ **DOWNLOAD FAILED** ❌ ║\n"
+                "╚═══════════════════════╝\n\n"
                 f"⚠️ **Error:** `{html.escape(str(e)[:100])}`\n\n"
-                f"💡 **Try again or use /cancel**"
+                "💡 **Try again or use /cancel**"
             )
         except Exception:
             pass
@@ -538,12 +524,9 @@ async def handle_subtitle(client: Client, message: Message):
 
         burn_start = time.time()
 
-        # OPTIMIZED FFmpeg command for ultra-fast processing
         safe_sub_path = sub_path.replace("'", "\\'")
-        # Optimized subtitle style for faster rendering
         vf_filter = f"subtitles='{safe_sub_path}':force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,Outline=1,Shadow=1'"
 
-        # Ultra-optimized FFmpeg command
         cmd = [
             'ffmpeg',
             '-hide_banner',
@@ -552,12 +535,12 @@ async def handle_subtitle(client: Client, message: Message):
             '-i', video_path,
             '-vf', vf_filter,
             '-c:v', 'libx264',
-            '-preset', 'veryfast',  # Faster preset
-            '-crf', '23',  # Slightly better quality/speed balance
+            '-preset', 'veryfast',
+            '-crf', '23',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-movflags', '+faststart',
-            '-threads', '0',  # Use all CPU threads
+            '-threads', '0',
             '-y',
             output_file
         ]
@@ -570,20 +553,17 @@ async def handle_subtitle(client: Client, message: Message):
             stderr=asyncio.subprocess.PIPE
         )
 
-        # Enhanced progress simulation with more realistic speed calculation
         async def simulate_burn_progress():
             start = time.time()
-            estimated = max(8.0, duration * 0.5)  # More optimistic estimation
+            estimated = max(8.0, duration * 0.5)
             while True:
                 elapsed = time.time() - start
                 percent = min((elapsed / estimated) * 100, 99)
-                # More dynamic speed calculation
-                speed_x = 1.5 + (percent / 100) * 3.0  # Range from 1.5x to 4.5x
+                speed_x = 1.5 + (percent / 100) * 3.0
                 await burn_progress.update(percent, speed_x)
                 await asyncio.sleep(0.8)
                 if process.returncode is not None:
                     break
-            # finalize to 100%
             await burn_progress.update(100, 4.5)
 
         progress_task = asyncio.create_task(simulate_burn_progress())
@@ -598,7 +578,6 @@ async def handle_subtitle(client: Client, message: Message):
 
         burn_time = time.time() - burn_start
 
-        # Check for errors
         if process.returncode != 0:
             stderr_output = await process.stderr.read()
             error_text = stderr_output.decode('utf-8', errors='ignore')
@@ -610,7 +589,6 @@ async def handle_subtitle(client: Client, message: Message):
         output_size = os.path.getsize(output_file)
         burn_speed = (user_data[chat_id]["file_size"] / burn_time) / (1024 * 1024) if burn_time > 0 else 0
 
-        # Upload with enhanced progress
         await status_msg.edit_text(
             "╔════════════════════════╗\n"
             "║ 🚀 **UPLOAD STARTED** 🚀 ║\n"
@@ -620,23 +598,25 @@ async def handle_subtitle(client: Client, message: Message):
         upload_progress = UltraProgress(client, chat_id, status_msg.id, os.path.basename(output_file), "UPLOAD")
 
         upload_start = time.time()
+        caption_text = (
+            "╔═════════════════════════════╗\n"
+            "║ ✅ **ULTRA BURN COMPLETE!** ✅ ║\n"
+            "╚═════════════════════════════╝\n\n"
+            "📊 **PERFORMANCE STATS:**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🚀 **Burn Speed:** `{burn_speed:.1f} MB/s`\n"
+            f"⏱️ **Burn Time:** `{format_time(burn_time)}`\n"
+            f"📦 **Output Size:** `{human_readable(output_size)}`\n"
+            "🎬 **Format:** MP4 (H.264)\n\n"
+            "🔥 **Subtitles permanently burned!**\n"
+            "⚡ **Processed with ultra-fast engine**\n\n"
+            "🎯 Ready for your next video! 🎯"
+        )
+        
         await client.send_video(
             chat_id,
             output_file,
-            caption=(
-                f"╔═════════════════════════════╗\n"
-                f"║ ✅ **ULTRA BURN COMPLETE!** ✅ ║\n"
-                f"╚═════════════════════════════╝\n\n"
-                f"📊 **PERFORMANCE STATS:**\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🚀 **Burn Speed:** `{burn_speed:.1f} MB/s`\n"
-                f"⏱️ **Burn Time:** `{format_time(burn_time)}`\n"
-                f"📦 **Output Size:** `{human_readable(output_size)}`\n"
-                f"🎬 **Format:** MP4 (H.264)\n\n"
-                f"🔥 **Subtitles permanently burned!**\n"
-                f"⚡ **Processed with ultra-fast engine**\n\n"
-                f"🎯 Ready for your next video! 🎯"
-            ),
+            caption=caption_text,
             progress=upload_progress.update,
             supports_streaming=True
         )
@@ -644,7 +624,6 @@ async def handle_subtitle(client: Client, message: Message):
 
         total_time = time.time() - user_data[chat_id]["start_time"]
         
-        # Final success message with full stats
         final_text = (
             "╔═══════════════════════════════╗\n"
             "║ 🎉 **MISSION ACCOMPLISHED!** 🎉 ║\n"
@@ -659,7 +638,6 @@ async def handle_subtitle(client: Client, message: Message):
         )
         await status_msg.edit_text(final_text)
 
-        # cleanup
         await asyncio.sleep(2)
         try:
             await status_msg.delete()
@@ -679,24 +657,24 @@ async def handle_subtitle(client: Client, message: Message):
         logger.exception("Ultra burn error")
         error_msg = str(e)
         try:
-            await status_msg.edit_text(
-                f"╔═════════════════════════╗\n"
-                f"║ ❌ **ULTRA BURN FAILED** ❌ ║\n"
-                f"╚═════════════════════════╝\n\n"
-                f"⚠️ **Error Details:**\n"
+            error_text = (
+                "╔═════════════════════════╗\n"
+                "║ ❌ **ULTRA BURN FAILED** ❌ ║\n"
+                "╚═════════════════════════╝\n\n"
+                "⚠️ **Error Details:**\n"
                 f"`{html.escape(error_msg[:150])}`\n\n"
-                f"💡 **OPTIMIZATION TIPS:**\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Use MP4/MKV format\n"
-                f"✅ Keep files under 2GB\n"
-                f"✅ Check .srt encoding (UTF-8)\n"
-                f"✅ Verify subtitle timing\n\n"
-                f"🔄 Use `/cancel` to restart"
+                "💡 **OPTIMIZATION TIPS:**\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "✅ Use MP4/MKV format\n"
+                "✅ Keep files under 2GB\n"
+                "✅ Check .srt encoding (UTF-8)\n"
+                "✅ Verify subtitle timing\n\n"
+                "🔄 Use `/cancel` to restart"
             )
+            await status_msg.edit_text(error_text)
         except Exception:
             pass
 
-        # emergency cleanup
         if chat_id in user_data:
             for key in ["video", "subtitle", "output"]:
                 file_path = user_data[chat_id].get(key)
@@ -729,4 +707,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception("Bot failed to start")
         print(f"❌ Bot failed to start: {e}")
-            f"
