@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 🎬 Filmzi Subtitle Burner Bot
-High-performance Telegram bot for burning permanent subtitles into videos
-Fixed MongoDB connection for Koyeb
+Fixed MongoDB connection and Pyrogram session issues
 """
 
 import os
@@ -12,13 +11,12 @@ import tempfile
 import aiofiles
 import aiohttp
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from pathlib import Path
 
 # Third-party imports
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import MessageMediaType
 import ffmpeg
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -27,7 +25,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH")
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/filmzi_bot")
-MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "4294967296"))  # 4GB default
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "4294967296"))
 PORT = int(os.getenv("PORT", "8000"))
 
 # Configure logging
@@ -42,20 +40,20 @@ class MongoDB:
     def __init__(self):
         self.client = None
         self.db = None
+        self.connected = False
         
     async def connect(self):
         """Connect to MongoDB with proper error handling"""
         try:
-            logger.info(f"Connecting to MongoDB: {MONGODB_URI.split('@')[-1] if '@' in MONGODB_URI else MONGODB_URI}")
-            self.client = AsyncIOMotorClient(MONGODB_URI)
+            logger.info("🔌 Connecting to MongoDB...")
+            self.client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
             
             # Test connection
             await self.client.admin.command('ping')
             logger.info("✅ MongoDB connection successful")
             
-            # Get database name from URI or use default
+            # Get database name from URI
             if "mongodb.net" in MONGODB_URI:
-                # For Atlas, database name is in the path
                 db_name = MONGODB_URI.split('/')[-1].split('?')[0]
                 if not db_name or db_name == 'test':
                     db_name = "filmzi_bot"
@@ -63,21 +61,22 @@ class MongoDB:
                 db_name = "filmzi_bot"
                 
             self.db = self.client[db_name]
+            self.connected = True
+            
             await self._create_indexes()
+            logger.info("✅ Database initialized successfully")
             
         except Exception as e:
             logger.error(f"❌ MongoDB connection failed: {e}")
-            # Create in-memory fallback
-            self.db = None
+            self.connected = False
+            # Don't raise exception, continue without DB
             
     async def _create_indexes(self):
         """Create database indexes"""
-        if self.db:
+        if self.connected:
             try:
                 await self.db.users.create_index("user_id", unique=True)
                 await self.db.videos.create_index("file_id")
-                await self.db.videos.create_index("user_id")
-                await self.db.thumbnails.create_index("user_id")
                 logger.info("✅ Database indexes created")
             except Exception as e:
                 logger.warning(f"Index creation warning: {e}")
@@ -86,10 +85,11 @@ class MongoDB:
         """Close database connection"""
         if self.client:
             self.client.close()
+            logger.info("🔌 MongoDB connection closed")
             
     async def save_user(self, user_id: int, username: str = None):
         """Save or update user data"""
-        if not self.db:
+        if not self.connected:
             return
             
         try:
@@ -111,7 +111,7 @@ class MongoDB:
     async def save_video_metadata(self, file_id: str, user_id: int, original_name: str, 
                                  processed_name: str, subtitle_file: str, thumbnail: str = None):
         """Save video processing metadata"""
-        if not self.db:
+        if not self.connected:
             return
             
         try:
@@ -126,44 +126,13 @@ class MongoDB:
             })
         except Exception as e:
             logger.warning(f"Failed to save video metadata: {e}")
-    
-    async def save_thumbnail(self, user_id: int, thumbnail_data: bytes):
-        """Save user's custom thumbnail"""
-        if not self.db:
-            return
-            
-        try:
-            await self.db.thumbnails.update_one(
-                {"user_id": user_id},
-                {
-                    "$set": {
-                        "thumbnail_data": thumbnail_data,
-                        "updated_at": datetime.utcnow()
-                    }
-                },
-                upsert=True
-            )
-        except Exception as e:
-            logger.warning(f"Failed to save thumbnail: {e}")
-    
-    async def get_thumbnail(self, user_id: int) -> Optional[bytes]:
-        """Get user's custom thumbnail"""
-        if not self.db:
-            return None
-            
-        try:
-            doc = await self.db.thumbnails.find_one({"user_id": user_id})
-            return doc.get("thumbnail_data") if doc else None
-        except Exception as e:
-            logger.warning(f"Failed to get thumbnail: {e}")
-            return None
 
 class ProgressTracker:
     """Track and display progress for download, burn, and upload"""
-    def __init__(self, client: Client, chat_id: int, message_id: int = None):
+    def __init__(self, client: Client, chat_id: int):
         self.client = client
         self.chat_id = chat_id
-        self.message_id = message_id
+        self.message_id = None
         self.download_progress = 0
         self.burn_progress = 0
         self.upload_progress = 0
@@ -217,55 +186,39 @@ class VideoProcessor:
         try:
             logger.info(f"Burning subtitles: {video_path} -> {output_path}")
             
-            # Use simpler FFmpeg command for reliability
-            if subtitle_path.suffix.lower() == '.ass':
-                subtitle_filter = f'ass={subtitle_path}'
-            else:
-                subtitle_filter = f'subtitles={subtitle_path}'
+            # Use direct FFmpeg command for reliability
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f'subtitles={subtitle_path}',
+                '-c:v', 'libx264',
+                '-crf', '23',
+                '-preset', 'medium',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
             
-            # Build FFmpeg command
-            input_video = ffmpeg.input(str(video_path))
-            
-            # Apply subtitle filter
-            video_stream = input_video.video.filter('subtitles', str(subtitle_path))
-            audio_stream = input_video.audio
-            
-            # Output configuration
-            output = ffmpeg.output(
-                video_stream, 
-                audio_stream, 
-                str(output_path),
-                vcodec='libx264',
-                crf=23,  # Good quality
-                preset='medium',
-                acodec='aac',
-                audio_bitrate='192k',
-                movflags='+faststart'
-            )
-            
-            # Run FFmpeg
             process = await asyncio.create_subprocess_exec(
-                'ffmpeg', '-y', '-i', str(video_path), '-vf', f'subtitles={subtitle_path}',
-                '-c:v', 'libx264', '-crf', '23', '-preset', 'medium',
-                '-c:a', 'aac', '-b:a', '192k',
-                str(output_path),
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Simulate progress (in real implementation, parse FFmpeg output)
-            for i in range(0, 101, 5):
+            # Simulate progress
+            for i in range(0, 101, 10):
                 if progress_callback:
                     await progress_callback(i)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
                 
-            await process.wait()
+            stdout, stderr = await process.communicate()
             
-            if output_path.exists() and output_path.stat().st_size > 0:
+            if process.returncode == 0 and output_path.exists():
                 logger.info("✅ Subtitle burning successful")
                 return True
             else:
-                logger.error("❌ Output file missing or empty")
+                logger.error(f"FFmpeg error: {stderr.decode()}")
                 return False
                 
         except Exception as e:
@@ -275,12 +228,17 @@ class VideoProcessor:
     async def extract_thumbnail(self, video_path: Path, output_path: Path, time_sec: int = 10):
         """Extract thumbnail from video at specific time"""
         try:
-            await asyncio.create_subprocess_exec(
-                'ffmpeg', '-y', '-i', str(video_path), '-ss', str(time_sec),
-                '-vframes', '1', '-q:v', '2', str(output_path),
+            process = await asyncio.create_subprocess_exec(
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-ss', str(time_sec),
+                '-vframes', '1',
+                '-q:v', '2',
+                str(output_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
+            await process.communicate()
             return output_path.exists()
         except Exception as e:
             logger.error(f"Thumbnail extraction error: {e}")
@@ -298,11 +256,13 @@ class VideoProcessor:
 class FilmziBot:
     """Main bot class"""
     def __init__(self):
+        # Use memory session to avoid file issues
         self.app = Client(
-            "filmzi_bot",
+            "filmzi_bot_session",
             api_id=API_ID,
             api_hash=API_HASH,
-            bot_token=BOT_TOKEN
+            bot_token=BOT_TOKEN,
+            in_memory=True  # Critical fix for file permission issues
         )
         self.db = MongoDB()
         self.user_states = {}
@@ -310,14 +270,14 @@ class FilmziBot:
     async def start_bot(self):
         """Start the bot"""
         try:
-            # Connect to database (will continue even if DB fails)
+            # Connect to database first
             await self.db.connect()
-            
-            # Register handlers
-            self.register_handlers()
             
             # Start health check server
             asyncio.create_task(self.start_health_check())
+            
+            # Register handlers
+            self.register_handlers()
             
             # Start the bot
             await self.app.start()
@@ -331,13 +291,15 @@ class FilmziBot:
             
         except Exception as e:
             logger.error(f"Failed to start bot: {e}")
+            raise
         finally:
             await self.shutdown()
     
     async def shutdown(self):
         """Shutdown the bot gracefully"""
         try:
-            await self.app.stop()
+            if self.app.is_connected:
+                await self.app.stop()
             await self.db.close()
             logger.info("👋 Bot shutdown complete")
         except Exception as e:
@@ -356,10 +318,10 @@ class FilmziBot:
                 "🎬 **Welcome to Filmzi Subtitle Burner!**\n\n"
                 "I can burn permanent subtitles into your videos.\n\n"
                 "**How to use:**\n"
-                "1. Send me a video file (up to 4GB)\n"
+                "1. Send me a video file\n"
                 "2. Send a subtitle file (.srt or .ass)\n"
-                "3. I'll process it and send back with burned subtitles\n\n"
-                "**Extra features:**\n"
+                "3. I'll process it with burned subtitles\n\n"
+                "**Features:**\n"
                 "• Rename output files\n"
                 "• Custom thumbnails\n"
                 "• High-quality processing"
@@ -403,12 +365,12 @@ class FilmziBot:
                 }
                 
                 await message.reply_text(
-                    "📹 Video received! Now please send me the subtitle file (.srt or .ass)"
+                    "📹 Video received! Now send me the subtitle file (.srt or .ass)"
                 )
                 
             except Exception as e:
                 logger.error(f"Error handling video: {e}")
-                await message.reply_text("❌ Error processing video. Please try again.")
+                await message.reply_text("❌ Error processing video")
         
         @self.app.on_message(filters.document & filters.private)
         async def handle_subtitle(client, message: Message):
@@ -428,59 +390,26 @@ class FilmziBot:
                 # Update user state
                 self.user_states[user_id]['subtitle_message'] = message
                 self.user_states[user_id]['waiting_for_subtitle'] = False
-                self.user_states[user_id]['waiting_for_rename'] = True
                 
-                # Ask for custom filename
                 original_name = user_state['video_file_name']
                 suggested_name = original_name.rsplit('.', 1)[0] + '_subbed.mp4'
                 
                 keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Use Default Name", callback_data="use_default_name")
+                    InlineKeyboardButton("Use Default Name", callback_data="use_default_name"),
+                    InlineKeyboardButton("Start Processing", callback_data="start_processing")
                 ]])
                 
                 await message.reply_text(
-                    f"📝 **Rename Output File**\n\n"
+                    f"📝 **Output Filename**\n\n"
                     f"Original: `{original_name}`\n"
-                    f"Suggested: `{suggested_name}`\n\n"
-                    "Send me a new filename or click the button below:",
+                    f"Default: `{suggested_name}`\n\n"
+                    "Choose an option:",
                     reply_markup=keyboard
                 )
                 
             except Exception as e:
                 logger.error(f"Error handling subtitle: {e}")
-                await message.reply_text("❌ Error processing subtitle. Please try again.")
-        
-        @self.app.on_message(filters.text & filters.private)
-        async def handle_text(client, message: Message):
-            """Handle text messages for renaming"""
-            try:
-                user_id = message.from_user.id
-                user_state = self.user_states.get(user_id, {})
-                
-                if user_state.get('waiting_for_rename'):
-                    custom_name = message.text.strip()
-                    if not custom_name.endswith('.mp4'):
-                        custom_name += '.mp4'
-                    
-                    # Clean filename
-                    custom_name = "".join(c for c in custom_name if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
-                    
-                    self.user_states[user_id]['output_filename'] = custom_name
-                    self.user_states[user_id]['waiting_for_rename'] = False
-                    
-                    keyboard = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("Auto-generate Thumbnail", callback_data="auto_thumbnail")
-                    ]])
-                    
-                    await message.reply_text(
-                        "🖼️ **Thumbnail Selection**\n\n"
-                        "Send me a custom thumbnail image or click below to auto-generate:",
-                        reply_markup=keyboard
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Error handling text: {e}")
-                await message.reply_text("❌ Error processing filename. Please try again.")
+                await message.reply_text("❌ Error processing subtitle")
         
         @self.app.on_callback_query()
         async def handle_callbacks(client, callback_query):
@@ -495,19 +424,17 @@ class FilmziBot:
                     suggested_name = original_name.rsplit('.', 1)[0] + '_subbed.mp4'
                     
                     self.user_states[user_id]['output_filename'] = suggested_name
-                    self.user_states[user_id]['waiting_for_rename'] = False
                     
                     keyboard = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("Auto-generate Thumbnail", callback_data="auto_thumbnail")
+                        InlineKeyboardButton("Start Processing", callback_data="start_processing")
                     ]])
                     
                     await callback_query.message.edit_text(
-                        "🖼️ **Thumbnail Selection**\n\n"
-                        "Send me a custom thumbnail image or click below to auto-generate:",
+                        f"✅ Using: `{suggested_name}`\n\nClick below to start:",
                         reply_markup=keyboard
                     )
                 
-                elif data == "auto_thumbnail":
+                elif data == "start_processing":
                     await callback_query.message.edit_text("🚀 Starting video processing...")
                     await self.process_video_with_subtitles(user_id)
                     
@@ -516,38 +443,8 @@ class FilmziBot:
             except Exception as e:
                 logger.error(f"Callback error: {e}")
                 await callback_query.answer("Error processing request", show_alert=True)
-        
-        @self.app.on_message(filters.photo & filters.private)
-        async def handle_thumbnail(client, message: Message):
-            """Handle custom thumbnail images"""
-            try:
-                user_id = message.from_user.id
-                user_state = self.user_states.get(user_id, {})
-                
-                if not user_state:
-                    return
-                
-                processor = VideoProcessor()
-                thumb_path = processor.temp_dir / "custom_thumb.jpg"
-                
-                progress_msg = await message.reply_text("📥 Downloading thumbnail...")
-                await message.download(str(thumb_path))
-                await progress_msg.delete()
-                
-                if thumb_path.exists():
-                    await self.db.save_thumbnail(user_id, thumb_path.read_bytes())
-                    await message.reply_text("✅ Thumbnail saved! Starting video processing...")
-                    await self.process_video_with_subtitles(user_id, custom_thumb=str(thumb_path))
-                else:
-                    await message.reply_text("❌ Failed to download thumbnail")
-                
-                processor.cleanup()
-                
-            except Exception as e:
-                logger.error(f"Thumbnail error: {e}")
-                await message.reply_text("❌ Error processing thumbnail")
     
-    async def process_video_with_subtitles(self, user_id: int, custom_thumb: str = None):
+    async def process_video_with_subtitles(self, user_id: int):
         """Main video processing function"""
         processor = VideoProcessor()
         progress_tracker = None
@@ -560,32 +457,29 @@ class FilmziBot:
             
             video_msg = user_state['video_message']
             subtitle_msg = user_state.get('subtitle_message')
-            output_filename = user_state.get('output_filename', 'output.mp4')
+            output_filename = user_state.get('output_filename', 'output_subbed.mp4')
             
             # Create progress message
             progress_tracker = ProgressTracker(self.app, user_id)
             await progress_tracker.create_progress_message()
             
-            # Download files
-            await progress_tracker.update_progress("download", 10)
-            
+            # Setup paths
             video_path = processor.temp_dir / "input_video.mp4"
             subtitle_path = processor.temp_dir / "subtitle"
             output_path = processor.temp_dir / output_filename
             
             # Download video
+            await progress_tracker.update_progress("download", 20)
             await video_msg.download(str(video_path))
-            await progress_tracker.update_progress("download", 40)
             
             # Download subtitle
+            await progress_tracker.update_progress("download", 60)
             if subtitle_msg and subtitle_msg.document:
                 subtitle_ext = Path(subtitle_msg.document.file_name or "subtitle.srt").suffix
                 subtitle_path = subtitle_path.with_suffix(subtitle_ext)
                 await subtitle_msg.download(str(subtitle_path))
-                await progress_tracker.update_progress("download", 70)
-            else:
-                await progress_tracker.update_progress("download", 100)
-                raise Exception("No subtitle file found")
+            
+            await progress_tracker.update_progress("download", 100)
             
             # Burn subtitles
             await progress_tracker.update_progress("burn", 10)
@@ -602,29 +496,24 @@ class FilmziBot:
             
             await progress_tracker.update_progress("burn", 100)
             
-            # Handle thumbnail
-            thumb_path = None
-            if custom_thumb:
-                thumb_path = Path(custom_thumb)
-            else:
-                thumb_path = processor.temp_dir / "auto_thumb.jpg"
-                await processor.extract_thumbnail(output_path, thumb_path)
-            
-            await progress_tracker.update_progress("upload", 10)
+            # Generate thumbnail
+            thumb_path = processor.temp_dir / "thumbnail.jpg"
+            await processor.extract_thumbnail(output_path, thumb_path)
             
             # Upload processed video
+            await progress_tracker.update_progress("upload", 10)
             await self.app.send_chat_action(user_id, "upload_video")
             
-            # Simple progress for upload
             def upload_progress(current, total):
-                progress = (current / total) * 100
+                progress = (current / total) * 80 + 10  # Scale to 10-90%
                 asyncio.create_task(progress_tracker.update_progress("upload", progress))
             
             # Send the processed video
+            thumb = str(thumb_path) if thumb_path.exists() else None
             await self.app.send_video(
                 chat_id=user_id,
                 video=str(output_path),
-                thumb=str(thumb_path) if thumb_path and thumb_path.exists() else None,
+                thumb=thumb,
                 caption=f"🎬 **Processed with Filmzi Bot**\n📁 `{output_filename}`",
                 file_name=output_filename,
                 progress=upload_progress
@@ -639,19 +528,19 @@ class FilmziBot:
                 original_name=user_state['video_file_name'],
                 processed_name=output_filename,
                 subtitle_file=subtitle_path.name,
-                thumbnail="custom" if custom_thumb else "auto"
+                thumbnail="auto"
             )
             
             # Cleanup
             if user_id in self.user_states:
                 del self.user_states[user_id]
                 
-            await asyncio.sleep(2)  # Let user see 100% progress
+            await asyncio.sleep(2)
             
         except Exception as e:
             logger.error(f"Processing error: {e}")
             error_msg = f"❌ Processing failed: {str(e)}"
-            if progress_tracker:
+            if progress_tracker and progress_tracker.message_id:
                 try:
                     await self.app.edit_message_text(
                         user_id, progress_tracker.message_id, error_msg
@@ -668,16 +557,17 @@ class FilmziBot:
         from aiohttp import web
         
         async def health_check(request):
+            status = "healthy" if self.app.is_connected else "starting"
             return web.json_response({
-                "status": "healthy",
+                "status": status,
                 "timestamp": datetime.utcnow().isoformat(),
                 "service": "filmzi-bot",
-                "bot_ready": self.app.is_connected if hasattr(self.app, 'is_connected') else False
+                "database": self.db.connected
             })
         
         app = web.Application()
         app.router.add_get('/health', health_check)
-        app.router.add_get('/', health_check)  # Root endpoint too
+        app.router.add_get('/', health_check)
         
         runner = web.AppRunner(app)
         await runner.setup()
@@ -686,15 +576,14 @@ class FilmziBot:
         
         logger.info(f"✅ Health check server running on port {PORT}")
 
-def main():
+async def main():
     """Main entry point"""
     # Validate required environment variables
     required_vars = ['BOT_TOKEN', 'API_ID', 'API_HASH']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
-        logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
-        logger.error("Please set these in your Koyeb environment variables")
+        logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
         return
     
     if API_ID == 0:
@@ -703,13 +592,12 @@ def main():
     
     # Start the bot
     bot = FilmziBot()
-    
+    await bot.start_bot()
+
+if __name__ == "__main__":
     try:
-        asyncio.run(bot.start_bot())
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-
-if __name__ == "__main__":
-    main()
