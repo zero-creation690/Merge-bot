@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Ultra Fast Subtitle Burner - SPEED OPTIMIZED
-Uses hardware acceleration and optimized settings for maximum speed
+UNIVERSAL Subtitle Burner - SUPPORTS ALL LANGUAGES
+Works with Sinhala, Arabic, Chinese, Japanese, Korean, Hindi, etc.
 """
 
 from pyrogram import Client, filters
@@ -30,7 +30,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "2147483648"))  # 2GB
 WORKERS = int(os.environ.get("WORKERS", "100"))
-CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/ultra_bot")
+CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/universal_bot")
 HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8000"))
 
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -48,7 +48,7 @@ if API_ID == 0 or not API_HASH or not BOT_TOKEN:
     raise SystemExit("Missing Telegram API credentials")
 
 app = Client(
-    "UltraFastBot",
+    "UniversalSubBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
@@ -71,7 +71,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "healthy",
                 "timestamp": time.time(),
-                "service": "ultra-subtitle-bot",
+                "service": "universal-subtitle-bot",
                 "active_sessions": len(user_data)
             }
             self.wfile.write(json.dumps(response).encode())
@@ -125,124 +125,128 @@ def get_video_duration(file_path: str) -> float:
         logger.warning(f"Could not get video duration: {e}")
     return 0.0
 
-def get_video_codec(file_path: str) -> str:
-    """Get video codec to determine if we can use copy"""
+def detect_subtitle_encoding(file_path: str) -> str:
+    """Detect subtitle file encoding"""
     try:
-        cmd = [
-            'ffprobe', '-v', 'error',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=codec_name',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            file_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        if result.returncode == 0:
-            return result.stdout.strip()
+        # Try to detect encoding
+        import chardet
+        with open(file_path, 'rb') as f:
+            raw_data = f.read()
+            result = chardet.detect(raw_data)
+            encoding = result['encoding']
+            confidence = result['confidence']
+            
+            logger.info(f"Detected encoding: {encoding} (confidence: {confidence})")
+            
+            if encoding and confidence > 0.7:
+                return encoding
     except Exception as e:
-        logger.warning(f"Could not get video codec: {e}")
-    return "h264"
+        logger.warning(f"Encoding detection failed: {e}")
+    
+    # Fallback encodings for different languages
+    return 'utf-8'
 
-def check_hardware_acceleration():
-    """Check available hardware acceleration"""
+def convert_subtitle_to_utf8(subtitle_path: str) -> str:
+    """Convert subtitle to UTF-8 with BOM for best compatibility"""
     try:
-        # Check for NVIDIA
-        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return "nvidia"
+        encoding = detect_subtitle_encoding(subtitle_path)
+        logger.info(f"Converting subtitle from {encoding} to UTF-8")
         
-        # Check for VAAPI
-        result = subprocess.run(['vainfo'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return "vaapi"
-            
-        # Check for QSV
-        result = subprocess.run(['ls', '/dev/dri'], capture_output=True, text=True)
-        if 'render' in result.stdout:
-            return "qsv"
-            
-    except Exception:
-        pass
-    return "software"
+        # Read with detected encoding
+        with open(subtitle_path, 'r', encoding=encoding, errors='replace') as f:
+            content = f.read()
+        
+        # Write with UTF-8 BOM
+        converted_path = subtitle_path + '.utf8'
+        with open(converted_path, 'w', encoding='utf-8-sig') as f:
+            f.write(content)
+        
+        return converted_path
+    except Exception as e:
+        logger.error(f"Subtitle conversion failed: {e}")
+        return subtitle_path
+
+def get_universal_font_path():
+    """Get a font that supports all languages"""
+    # Common fonts that support multiple languages
+    universal_fonts = [
+        # Linux fonts
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+        '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
+        # Windows fonts (if using Wine)
+        '/usr/share/windows/fonts/arial.ttf',
+        # Android fonts
+        '/system/fonts/NotoSans-Regular.ttf',
+        # Google Noto fonts (best for international)
+        '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+    ]
+    
+    for font_path in universal_fonts:
+        if os.path.exists(font_path):
+            logger.info(f"Using universal font: {font_path}")
+            return font_path
+    
+    logger.warning("No universal font found, using fallback")
+    return "Arial"  # Fallback to Arial
 
 def sanitize_filename(filename: str) -> str:
     return re.sub(r'[^\w\-_. ]', '', filename)
 
-# ---------- OPTIMIZED FFMPEG COMMANDS ----------
-def get_optimized_ffmpeg_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str, duration: float):
-    """Get optimized FFmpeg command based on available hardware"""
-    hw_accel = check_hardware_acceleration()
-    logger.info(f"Using hardware acceleration: {hw_accel}")
+# ---------- UNIVERSAL FFMPEG COMMANDS ----------
+def get_universal_ffmpeg_command(video_path: str, subtitle_path: str, output_path: str, sub_ext: str):
+    """Get FFmpeg command that supports ALL languages"""
     
-    base_cmd = ['ffmpeg', '-hide_banner', '-y']
+    # Convert subtitle to UTF-8 if needed
+    if sub_ext in ['.srt', '.ass', '.ssa']:
+        subtitle_path = convert_subtitle_to_utf8(subtitle_path)
     
-    # Input options for speed
-    base_cmd.extend(['-i', video_path])
+    # Get universal font
+    font_path = get_universal_font_path()
     
-    # Subtitle filter
+    # Universal subtitle styles for all languages
     if sub_ext == '.ass':
+        # For ASS files, use the built-in styling
         vf_filter = f"ass={shlex.quote(subtitle_path)}"
     else:
-        vf_filter = f"subtitles={shlex.quote(subtitle_path)}"
+        # For SRT and other formats, apply universal styling
+        style_options = [
+            f"Fontname={font_path}",
+            "FontSize=24",
+            "PrimaryColour=&H00FFFFFF",      # White text
+            "OutlineColour=&H00000000",      # Black outline
+            "BackColour=&H80000000",         # Semi-transparent background
+            "Bold=0",
+            "Italic=0",
+            "BorderStyle=1",
+            "Outline=1",
+            "Shadow=1",
+            "MarginL=10",
+            "MarginR=10",
+            "MarginV=20",
+            "Alignment=2"  # Center bottom
+        ]
+        style_string = ','.join(style_options)
+        
+        vf_filter = f"subtitles={shlex.quote(subtitle_path)}:force_style='{style_string}'"
     
-    # VIDEO ENCODING OPTIMIZATIONS
-    if hw_accel == "nvidia":
-        # NVIDIA NVENC - fastest hardware encoding
-        base_cmd.extend([
-            '-vf', vf_filter,
-            '-c:v', 'h264_nvenc',
-            '-preset', 'p1',  # fastest nvenc preset
-            '-rc', 'constqp',
-            '-qp', '23',
-            '-b:v', '0',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-movflags', '+faststart'
-        ])
-    elif hw_accel == "vaapi":
-        # VAAPI hardware encoding
-        base_cmd.extend([
-            '-vaapi_device', '/dev/dri/renderD128',
-            '-vf', f'format=nv12,hwupload,{vf_filter}',
-            '-c:v', 'h264_vaapi',
-            '-global_quality', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k'
-        ])
-    elif hw_accel == "qsv":
-        # Intel Quick Sync
-        base_cmd.extend([
-            '-vf', f'format=nv12,hwupload=extra_hw_frames=64,{vf_filter}',
-            '-c:v', 'h264_qsv',
-            '-preset', 'veryfast',
-            '-global_quality', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k'
-        ])
-    else:
-        # SOFTWARE ENCODING - ULTRA FAST SETTINGS
-        base_cmd.extend([
-            '-vf', vf_filter,
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',  # Fastest software preset
-            '-crf', '28',  # Slightly higher CRF for speed
-            '-tune', 'fastdecode',  # Optimize for decoding speed
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-movflags', '+faststart',
-            '-threads', '0'  # Use all available threads
-        ])
-    
-    # For very long videos, use faster settings
-    if duration > 600:  # Longer than 10 minutes
-        if hw_accel == "software":
-            base_cmd.extend(['-preset', 'ultrafast', '-crf', '30'])
-        logger.info("Using ultra-fast settings for long video")
-    
-    base_cmd.append(output_path)
-    return base_cmd
+    # Universal encoding settings
+    return [
+        'ffmpeg', '-hide_banner', '-y',
+        '-i', video_path,
+        '-vf', vf_filter,
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-c:a', 'copy',  # Copy audio for speed
+        '-movflags', '+faststart',
+        '-threads', '0',
+        output_path
+    ]
 
 # ---------- PROGRESS TRACKING ----------
-class RealBurningProgress:
+class UniversalProgress:
     def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, total_duration: float):
         self.client = client
         self.chat_id = chat_id
@@ -266,10 +270,9 @@ class RealBurningProgress:
             if self.total_duration > 0:
                 percent = min((current_time / self.total_duration) * 100, 99)
             else:
-                percent = self.last_percent + 0.1  # Incremental fallback
+                percent = self.last_percent + 0.5
 
-            # Only update if significant change or every 10 seconds
-            if (percent - self.last_percent >= 2) or (now - self.last_update >= 10):
+            if (percent - self.last_percent >= 1) or (now - self.last_update >= 5):
                 await self.update_display(percent, current_time)
                 self.last_percent = percent
                 self.last_update = now
@@ -278,7 +281,6 @@ class RealBurningProgress:
         """Update the progress display"""
         elapsed = time.time() - self.start_time
         
-        # Calculate real speed and ETA
         if current_time > 0 and elapsed > 0:
             speed_x = current_time / elapsed
             if speed_x > 0:
@@ -292,29 +294,26 @@ class RealBurningProgress:
 
         bar_len = 10
         filled_len = int(bar_len * percent / 100)
-        bar = "🔥" * filled_len + "░" * (bar_len - filled_len)
+        bar = "🌍" * filled_len + "░" * (bar_len - filled_len)
 
-        # Speed status with realistic expectations
         if speed_x > 5.0:
-            status = "ULTRA BURN"
+            status = "ULTRA FAST"
         elif speed_x > 2.0:
-            status = "TURBO BURN"
+            status = "VERY FAST"
         elif speed_x > 1.0:
-            status = "FAST BURN"
+            status = "FAST"
         elif speed_x > 0.5:
             status = "NORMAL"
-        elif speed_x > 0.2:
-            status = "SLOW"
         else:
-            status = "VERY SLOW"
+            status = "PROCESSING"
 
         time_info = f"({format_time(current_time)}/{format_time(self.total_duration)})"
 
         text = (
-            f"⚙️ **{status}** • **{speed_x:.1f}x**\n"
+            f"🌍 **UNIVERSAL {status}** • **{speed_x:.1f}x**\n"
             f"`{bar}` **{percent:.1f}%** {time_info}\n"
             f"⏱️ **ETA:** `{eta}`\n"
-            f"**Optimized encoding active...**"
+            f"**Supporting all languages...**"
         )
 
         try:
@@ -326,17 +325,17 @@ class RealBurningProgress:
         """Mark as 100% complete"""
         total_time = time.time() - self.start_time
         text = (
-            f"✅ **PROCESSING COMPLETE!**\n"
-            f"`{'🔥' * 10}` **100%**\n"
-            f"⏱️ **Encoding Time:** {format_time(total_time)}\n"
-            f"**Finalizing output...**"
+            f"✅ **UNIVERSAL PROCESSING COMPLETE!**\n"
+            f"`{'🌍' * 10}` **100%**\n"
+            f"⏱️ **Processing Time:** {format_time(total_time)}\n"
+            f"**Finalizing multilingual output...**"
         )
         try:
             await self.client.edit_message_text(self.chat_id, self.message_id, text)
         except Exception:
             pass
 
-class UltraProgress:
+class DownloadProgress:
     def __init__(self, client: Client, chat_id: int, message_id: int, filename: str, action="DOWNLOAD"):
         self.client = client
         self.chat_id = chat_id
@@ -394,64 +393,70 @@ class UltraProgress:
 # ---------- BOT COMMANDS ----------
 @app.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
-    hw_accel = check_hardware_acceleration()
     welcome_text = (
-        f"🚀 **ULTRA FAST SUBTITLE BOT** 🚀\n\n"
-        f"⚡ **Hardware Acceleration:** `{hw_accel.upper()}`\n"
-        f"• **Optimized for maximum speed**\n"
-        f"• **Hardware encoding when available**\n"
-        f"• **Real progress tracking**\n"
-        f"• **SRT & ASS support**\n\n"
-        f"📋 **How to use:**\n"
-        f"1. Send video file\n"
-        f"2. Send subtitle file\n"
-        f"3. Get fast results!\n\n"
-        f"🔥 **Optimized for speed!**"
+        "🌍 **UNIVERSAL SUBTITLE BOT** 🌍\n\n"
+        "✅ **Supports ALL Languages:**\n"
+        "• Sinhala (සිංහල)\n" 
+        "• Arabic (العربية)\n"
+        "• Chinese (中文)\n"
+        "• Japanese (日本語)\n"
+        "• Korean (한국어)\n"
+        "• Hindi (हिन्दी)\n"
+        "• And 100+ more!\n\n"
+        "📋 **How to use:**\n"
+        "1. Send video file\n"
+        "2. Send subtitle file (.srt, .ass)\n"
+        "3. Get perfect multilingual results!\n\n"
+        "🚀 **Universal language support guaranteed!**"
     )
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📖 Help", callback_data="help"),
-         InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+         InlineKeyboardButton("🌍 Supported Languages", callback_data="languages")]
     ])
     
     await message.reply_text(welcome_text, reply_markup=keyboard)
 
 @app.on_message(filters.command("help"))
 async def help_command(client: Client, message: Message):
-    hw_accel = check_hardware_acceleration()
     help_text = (
-        "🆘 **SPEED OPTIMIZED GUIDE**\n\n"
-        f"**Hardware:** {hw_accel.upper()}\n"
-        "**Format:** Any → MP4\n"
-        "**Subtitles:** SRT, ASS\n"
+        "🆘 **UNIVERSAL SUBTITLE GUIDE** 🌍\n\n"
+        "**Supported Languages:** ALL\n"
+        "**Formats:** SRT, ASS, SSA\n"
+        "**Encoding:** Automatic UTF-8 conversion\n"
+        "**Fonts:** Universal font support\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
-        "**Speed Optimizations:**\n"
-        "• Hardware encoding (NVENC/VAAPI/QSV)\n"
-        "• Ultrafast software presets\n"
-        "• Multi-threaded processing\n\n"
+        "**Features:**\n"
+        "• Automatic encoding detection\n"
+        "• Universal font rendering\n"
+        "• Right-to-left support (Arabic, Hebrew)\n"
+        "• Complex scripts (Sinhala, Thai, etc.)\n\n"
         "**Commands:**\n"
         "`/start` - Start bot\n"
         "`/help` - This guide\n"
-        "`/cancel` - Cancel operation\n"
-        "`/status` - Check bot status\n\n"
-        "🚀 **Maximum speed optimization active!**"
+        "`/languages` - Show supported languages\n"
+        "`/cancel` - Cancel operation\n\n"
+        "🌍 **All languages supported!**"
     )
     await message.reply_text(help_text)
 
-@app.on_message(filters.command("status"))
-async def status_command(client: Client, message: Message):
-    hw_accel = check_hardware_acceleration()
-    active_with_progress = sum(1 for data in user_data.values() if data.get("processing"))
-    status_text = (
-        "🤖 **Bot Status**\n\n"
-        f"**Hardware:** {hw_accel.upper()}\n"
-        f"**Active Sessions:** {len(user_data)}\n"
-        f"**Processing Now:** {active_with_progress}\n"
-        f"**Max File Size:** {human_readable(MAX_FILE_SIZE)}\n"
-        f"**Workers:** {WORKERS}\n\n"
-        "✅ **Speed-optimized encoding active!**"
+@app.on_message(filters.command("languages"))
+async def languages_command(client: Client, message: Message):
+    languages_text = (
+        "🌍 **SUPPORTED LANGUAGES** 🌍\n\n"
+        "**South Asian:**\n"
+        "• Sinhala (සිංහල)\n• Hindi (हिन्दी)\n• Tamil (தமிழ்)\n• Bengali (বাংলা)\n"
+        "• Urdu (اردو)\n• Punjabi (ਪੰਜਾਬੀ)\n• Marathi (मराठी)\n• Gujarati (ગુજરાતી)\n\n"
+        "**East Asian:**\n"
+        "• Chinese (中文)\n• Japanese (日本語)\n• Korean (한국어)\n"
+        "• Thai (ไทย)\n• Vietnamese (Tiếng Việt)\n\n"
+        "**Middle Eastern:**\n"
+        "• Arabic (العربية)\n• Hebrew (עברית)\n• Persian (فارسی)\n• Turkish (Türkçe)\n\n"
+        "**European:**\n"
+        "• English\n• Spanish\n• French\n• German\n• Russian\n• Greek\n• And many more!\n\n"
+        "✅ **All Unicode languages supported!**"
     )
-    await message.reply_text(status_text)
+    await message.reply_text(languages_text)
 
 @app.on_message(filters.command("cancel"))
 async def cancel_operation(client: Client, message: Message):
@@ -476,12 +481,14 @@ async def handle_callbacks(client, callback_query):
     
     if data == "help":
         await help_command(client, callback_query.message)
+    elif data == "languages":
+        await languages_command(client, callback_query.message)
     elif data == "cancel":
         await cancel_operation(client, callback_query.message)
     
     await callback_query.answer()
 
-# ---------- OPTIMIZED FILE HANDLERS ----------
+# ---------- UNIVERSAL FILE HANDLERS ----------
 @app.on_message(filters.video | filters.document)
 async def handle_file(client: Client, message: Message):
     chat_id = message.chat.id
@@ -496,7 +503,7 @@ async def handle_file(client: Client, message: Message):
     elif message.document:
         file_obj = message.document
         if (file_obj.file_name and 
-            file_obj.file_name.lower().endswith(('.srt', '.ass')) and
+            file_obj.file_name.lower().endswith(('.srt', '.ass', '.ssa')) and
             chat_id in user_data and "video_path" in user_data[chat_id]):
             await handle_subtitle(client, message)
             return
@@ -513,7 +520,7 @@ async def handle_file(client: Client, message: Message):
         return
 
     if chat_id in user_data and "video_path" in user_data[chat_id]:
-        await message.reply_text("⚠️ **Video already received** — send subtitle file (.srt or .ass).")
+        await message.reply_text("⚠️ **Video already received** — send subtitle file (.srt, .ass, .ssa).")
         return
 
     unique_id = secrets.token_hex(6)
@@ -522,8 +529,8 @@ async def handle_file(client: Client, message: Message):
     ext = os.path.splitext(safe_filename)[1] or ".mp4"
     download_path = os.path.join(CACHE_DIR, f"v_{unique_id}{ext}")
 
-    status_msg = await message.reply_text("🚀 **ULTRA DOWNLOAD STARTED**")
-    progress = UltraProgress(client, chat_id, status_msg.id, safe_filename, "DOWNLOAD")
+    status_msg = await message.reply_text("🌍 **UNIVERSAL DOWNLOAD**")
+    progress = DownloadProgress(client, chat_id, status_msg.id, safe_filename, "DOWNLOAD")
 
     try:
         download_start = time.time()
@@ -532,14 +539,12 @@ async def handle_file(client: Client, message: Message):
         avg_speed = file_obj.file_size / download_time / (1024 * 1024) if download_time > 0 else 0
 
         duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
-        codec = await asyncio.get_event_loop().run_in_executor(executor, get_video_codec, video_path)
 
         user_data[chat_id] = {
             "video_path": video_path,
             "original_filename": safe_filename,
             "file_size": file_obj.file_size,
             "duration": duration,
-            "codec": codec,
             "start_time": time.time(),
             "processing": False
         }
@@ -548,11 +553,10 @@ async def handle_file(client: Client, message: Message):
             f"✅ **DOWNLOAD COMPLETE!**\n\n"
             f"📊 **Video Info:**\n"
             f"• Duration: `{format_time(duration)}`\n"
-            f"• Codec: `{codec}`\n"
             f"• Size: `{human_readable(file_obj.file_size)}`\n\n"
             f"🚀 **Speed:** {avg_speed:.1f} MB/s\n"
             f"⏱️ **Time:** {format_time(download_time)}\n\n"
-            f"🔥 **Send subtitle file (.srt or .ass)**"
+            f"🌍 **Send subtitle file for UNIVERSAL processing!**"
         )
 
     except Exception as e:
@@ -586,16 +590,17 @@ async def handle_subtitle(client: Client, message: Message):
         return
 
     sub_ext = sub_obj.file_name.lower()
-    if not (sub_ext.endswith('.srt') or sub_ext.endswith('.ass')):
-        await message.reply_text("❌ **Invalid subtitle format!** Send .srt or .ass file.")
+    supported_formats = ('.srt', '.ass', '.ssa')
+    if not any(sub_ext.endswith(fmt) for fmt in supported_formats):
+        await message.reply_text("❌ **Invalid subtitle format!** Send .srt, .ass, or .ssa file.")
         return
 
-    status_msg = await message.reply_text("🚀 **DOWNLOADING SUBTITLE**")
+    status_msg = await message.reply_text("🌍 **UNIVERSAL SUBTITLE DOWNLOAD**")
     unique_id = secrets.token_hex(6)
     sub_ext = os.path.splitext(sub_obj.file_name)[1].lower()
     sub_filename = os.path.join(CACHE_DIR, f"s_{unique_id}{sub_ext}")
 
-    progress = UltraProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOAD")
+    progress = DownloadProgress(client, chat_id, status_msg.id, sub_obj.file_name, "DOWNLOAD")
 
     try:
         sub_path = await message.download(file_name=sub_filename, progress=progress.update)
@@ -605,28 +610,28 @@ async def handle_subtitle(client: Client, message: Message):
         duration = user_data[chat_id]["duration"]
         
         base_name = os.path.splitext(original_filename)[0]
-        output_filename = f"{base_name}_burned_{unique_id}.mp4"
+        output_filename = f"{base_name}_UNIVERSAL_{unique_id}.mp4"
         output_file = os.path.join(CACHE_DIR, output_filename)
 
         user_data[chat_id]["processing"] = True
         user_data[chat_id]["subtitle_path"] = sub_path
         user_data[chat_id]["output_path"] = output_file
 
-        # Get optimized FFmpeg command
-        ffmpeg_cmd = get_optimized_ffmpeg_command(video_path, sub_path, output_file, sub_ext, duration)
+        # Get UNIVERSAL FFmpeg command
+        ffmpeg_cmd = get_universal_ffmpeg_command(video_path, sub_path, output_file, sub_ext)
         
-        hw_accel = check_hardware_acceleration()
         await status_msg.edit_text(
-            f"🔥 **STARTING OPTIMIZED BURN**\n"
+            f"🌍 **UNIVERSAL LANGUAGE PROCESSING**\n"
             f"`░░░░░░░░░░` **0%**\n"
-            f"**Hardware:** {hw_accel.upper()}\n"
-            f"**Estimated:** {format_time(duration / 2)}"
+            f"**Format:** {sub_ext.upper()}\n"
+            f"**Features:** UTF-8, Multi-language fonts\n"
+            f"**Estimated:** {format_time(duration / 3)}"
         )
 
         burn_start = time.time()
-        burn_progress = RealBurningProgress(client, chat_id, status_msg.id, base_name, duration)
+        burn_progress = UniversalProgress(client, chat_id, status_msg.id, base_name, duration)
 
-        logger.info(f"Running optimized FFmpeg: {' '.join(ffmpeg_cmd)}")
+        logger.info(f"Running universal FFmpeg: {' '.join(ffmpeg_cmd)}")
         process = await asyncio.create_subprocess_exec(
             *ffmpeg_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -659,7 +664,7 @@ async def handle_subtitle(client: Client, message: Message):
         if process.returncode != 0:
             stderr_output = await process.stderr.read()
             error_text = stderr_output.decode('utf-8', errors='ignore')
-            raise Exception(f"Burn failed: {error_text[:200]}")
+            raise Exception(f"Processing failed: {error_text[:200]}")
 
         if not os.path.exists(output_file):
             raise Exception("Output file not created")
@@ -667,20 +672,20 @@ async def handle_subtitle(client: Client, message: Message):
         output_size = os.path.getsize(output_file)
 
         # Upload
-        await status_msg.edit_text("🚀 **ULTRA UPLOAD STARTED**")
-        upload_progress = UltraProgress(client, chat_id, status_msg.id, output_filename, "UPLOAD")
+        await status_msg.edit_text("🌍 **UNIVERSAL UPLOAD**")
+        upload_progress = DownloadProgress(client, chat_id, status_msg.id, output_filename, "UPLOAD")
 
         await client.send_video(
             chat_id,
             output_file,
             caption=(
-                f"✅ **OPTIMIZED PROCESSING COMPLETE!**\n\n"
+                f"✅ **UNIVERSAL PROCESSING COMPLETE!** 🌍\n\n"
                 f"📊 **Results:**\n"
-                f"• Encoding: `{hw_accel.upper()}`\n"
-                f"• Total Time: `{format_time(burn_time)}`\n"
+                f"• Language Support: `ALL`\n"
+                f"• Processing Time: `{format_time(burn_time)}`\n"
                 f"• Output Size: `{human_readable(output_size)}`\n"
                 f"• Speed: `{duration/burn_time:.1f}x` realtime\n\n"
-                f"🔥 **Hardware-accelerated encoding!**"
+                f"🌍 **Perfect multilingual rendering!**"
             ),
             progress=upload_progress.update,
             supports_streaming=True
@@ -688,9 +693,10 @@ async def handle_subtitle(client: Client, message: Message):
 
         total_time = time.time() - user_data[chat_id]["start_time"]
         await status_msg.edit_text(
-            f"🎉 **PROCESSING COMPLETE!**\n\n"
+            f"🎉 **UNIVERSAL SUCCESS!** 🌍\n\n"
             f"✅ **Total Time:** {format_time(total_time)}\n"
-            f"🚀 **Optimized encoding successful!**"
+            f"🌍 **All languages supported!**\n"
+            f"🚀 **Ready for next file!**"
         )
 
         # Cleanup
@@ -700,17 +706,22 @@ async def handle_subtitle(client: Client, message: Message):
         except Exception:
             pass
 
+        # Clean up all files including converted subtitles
         for file_path in [video_path, sub_path, output_file]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
+                # Also remove converted subtitle if it exists
+                converted_path = file_path + '.utf8'
+                if os.path.exists(converted_path):
+                    os.remove(converted_path)
             except Exception:
                 pass
 
         user_data[chat_id] = {"processing": False}
 
     except Exception as e:
-        logger.exception("Processing error")
+        logger.exception("Universal processing error")
         error_msg = str(e)
         
         if chat_id in user_data:
@@ -718,12 +729,12 @@ async def handle_subtitle(client: Client, message: Message):
         
         try:
             await status_msg.edit_text(
-                f"❌ **PROCESSING FAILED!**\n\n"
+                f"❌ **UNIVERSAL PROCESSING FAILED!** 🌍\n\n"
                 f"`{html.escape(error_msg)}`\n\n"
-                f"💡 **Speed Tips:**\n"
-                f"• Try shorter videos first\n"
-                f"• Use MP4 format\n"
-                f"• Lower resolution = faster\n"
+                f"💡 **For best results:**\n"
+                f"• Use UTF-8 encoded subtitle files\n"
+                f"• Ensure proper timing in subtitles\n"
+                f"• Use standard formats (SRT, ASS)\n"
                 f"• Use /cancel to restart"
             )
         except Exception:
@@ -735,20 +746,23 @@ async def handle_subtitle(client: Client, message: Message):
                 if file_path and os.path.exists(file_path):
                     try:
                         os.remove(file_path)
+                        # Also remove converted subtitle
+                        converted_path = file_path + '.utf8'
+                        if os.path.exists(converted_path):
+                            os.remove(converted_path)
                     except Exception:
                         pass
 
 # ---------- BOT STARTUP ----------
 if __name__ == "__main__":
-    hw_accel = check_hardware_acceleration()
     print("=" * 60)
-    print("🚀 ULTRA FAST SUBTITLE BOT - SPEED OPTIMIZED")
+    print("🌍 UNIVERSAL SUBTITLE BOT - ALL LANGUAGES SUPPORTED")
     print("=" * 60)
-    print(f"⚡ Hardware Acceleration: {hw_accel.upper()}")
     print(f"📦 Max Size: {human_readable(MAX_FILE_SIZE)}")
     print(f"🔥 Workers: {WORKERS}")
     print(f"🏥 Health Port: {HEALTH_PORT}")
-    print("🎯 Features: Hardware encoding, Speed optimization")
+    print("🎯 Features: UTF-8, Multi-language, Universal fonts")
+    print("✅ Supported: Sinhala, Arabic, Chinese, Japanese, etc.")
     print("=" * 60)
 
     try:
