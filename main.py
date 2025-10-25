@@ -645,18 +645,19 @@ async def handle_subtitle(client: Client, message: Message):
         total_time = time.time() - user_data[chat_id]["start_time"]
         
         # Final success message with full stats
-        await status_msg.edit_text(
-            f"╔═══════════════════════════════╗\n"
-            f"║ 🎉 **MISSION ACCOMPLISHED!** 🎉 ║\n"
-            f"╚═══════════════════════════════╝\n\n"
-            f"📊 **COMPLETE STATISTICS:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        final_text = (
+            "╔═══════════════════════════════╗\n"
+            "║ 🎉 **MISSION ACCOMPLISHED!** 🎉 ║\n"
+            "╚═══════════════════════════════╝\n\n"
+            "📊 **COMPLETE STATISTICS:**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"⏱️ **Total Time:** `{format_time(total_time)}`\n"
             f"🔥 **Burn Time:** `{format_time(burn_time)}`\n"
             f"📤 **Upload Time:** `{format_time(upload_time)}`\n"
             f"🚀 **Avg Speed:** `{burn_speed:.1f} MB/s`\n\n"
-            f"✨ **Ready for next ultra-fast burn!** ✨"
+            "✨ **Ready for next ultra-fast burn!** ✨"
         )
+        await status_msg.edit_text(final_text)
 
         # cleanup
         await asyncio.sleep(2)
