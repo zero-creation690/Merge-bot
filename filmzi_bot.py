@@ -1,28 +1,9 @@
 #!/usr/bin/env python3
 """
 Ultra Fast Subtitle Burner - production-ready single-file bot
-
-Place this file on your server, set environment variables, install dependencies
-and run. This script is a cleaned, fixed and working version of the code you
-provided with safer progress callbacks, better ffmpeg escaping, and small fixes.
-
-Required environment variables:
-  - API_ID (int)
-  - API_HASH (str)
-  - BOT_TOKEN (str)
-  - MAX_FILE_SIZE (optional, default 2147483648)
-  - WORKERS (optional, default 100)
-  - HEALTH_PORT (optional, default 8000)
-
-Dependencies (install with pip):
-  pip install pyrogram aiofiles
-
-System dependencies:
-  - ffmpeg + ffprobe available on PATH
-
-Run:
-  python3 ultra_fast_subtitle_bot.py
+FIXED VERSION - Supports Sinhala, Tamil, and English subtitles
 """
+
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import subprocess
@@ -247,6 +228,7 @@ async def start(client: Client, message: Message):
         "• **Real-time burning** progress\n"
         "• **Any format** to MP4\n"
         "• **Permanent** subtitle burning\n"
+        "• **Unicode Support** (Sinhala, Tamil, English)\n"
         "• **2GB** max file size (configurable)\n\n"
         "📋 **How to use:**\n"
         "1. Send video file\n"
@@ -263,6 +245,7 @@ async def help_command(client: Client, message: Message):
         "🆘 **ULTRA FAST GUIDE**\n\n"
         "**Format:** Any → MP4\n"
         "**Subtitles:** Burned permanently\n"
+        "**Languages:** Sinhala, Tamil, English (Unicode)\n"
         "**Max Size:** {}\n\n".format(human_readable(MAX_FILE_SIZE)) +
         "**Commands:**\n"
         "`/start` - Start bot\n"
@@ -345,7 +328,8 @@ async def handle_file(client: Client, message: Message):
             f"✅ **DOWNLOAD COMPLETE!**\n\n"
             f"🚀 **Speed:** {avg_speed:.1f} MB/s\n"
             f"⏱️ **Time:** {format_time(download_time)}\n\n"
-            f"🔥 **Send subtitle file (.srt)**"
+            f"🔥 **Send subtitle file (.srt)**\n"
+            f"🌍 **Supports:** Sinhala, Tamil, English"
         )
 
     except Exception as e:
@@ -389,16 +373,16 @@ async def handle_subtitle(client: Client, message: Message):
         duration = await asyncio.get_event_loop().run_in_executor(executor, get_video_duration, video_path)
 
         burn_progress = BurningProgress(client, chat_id, status_msg.id, base_name, duration)
-        await status_msg.edit_text("🔥 **STARTING ULTRA BURN**\n`░░░░░░░░░░` **0%**")
+        await status_msg.edit_text("🔥 **STARTING ULTRA BURN**\n`░░░░░░░░░░` **0%**\n🌍 **Unicode Support: Enabled**")
 
         burn_start = time.time()
 
-        # Prepare safe path for subtitles in ffmpeg filter
-        # Use ffmpeg subtitles filter which expects the path; escape single quotes and backslashes
-        safe_sub_path = sub_path.replace("'", "\\'")
-        vf_filter = f"subtitles='{safe_sub_path}':force_style='FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&'"
+        # FIXED: Use proper Unicode support for Sinhala/Tamil subtitles
+        # Use filename= parameter and force UTF-8 encoding
+        safe_sub_path = sub_path.replace("'", "'\\''")
+        vf_filter = f"subtitles=filename='{safe_sub_path}':charenc=UTF-8:force_style='FontName=DejaVu Sans,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000'"
 
-        # Build FFmpeg command
+        # Build FFmpeg command with Unicode support
         cmd = [
             'ffmpeg',
             '-hide_banner',
@@ -416,7 +400,7 @@ async def handle_subtitle(client: Client, message: Message):
             output_file
         ]
 
-        logger.info("Starting ffmpeg: %s", ' '.join(shlex.quote(p) for p in cmd))
+        logger.info("Starting ffmpeg with Unicode support: %s", ' '.join(shlex.quote(p) for p in cmd))
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -476,7 +460,8 @@ async def handle_subtitle(client: Client, message: Message):
                 f"✅ **ULTRA BURN COMPLETE!**\n\n"
                 f"🚀 **Burn Speed:** {burn_speed:.1f} MB/s\n"
                 f"⏱️ **Burn Time:** {format_time(burn_time)}\n"
-                f"📦 **Output Size:** {human_readable(output_size)}\n\n"
+                f"📦 **Output Size:** {human_readable(output_size)}\n"
+                f"🌍 **Unicode Support:** Sinhala/Tamil/English ✓\n\n"
                 f"🔥 **Subtitles permanently burned!**"
             ),
             progress=upload_progress.update,
@@ -488,6 +473,7 @@ async def handle_subtitle(client: Client, message: Message):
         await status_msg.edit_text(
             f"🎉 **MISSION ACCOMPLISHED!**\n\n"
             f"✅ **Total Time:** {format_time(total_time)}\n"
+            f"🌍 **Unicode Support:** Active ✓\n"
             f"🚀 **Ready for next file!**"
         )
 
@@ -514,10 +500,10 @@ async def handle_subtitle(client: Client, message: Message):
             await status_msg.edit_text(
                 f"❌ **ULTRA BURN FAILED!**\n\n"
                 f"`{html.escape(error_msg)}`\n\n"
-                f"💡 **Tips for ultra speed:**\n"
-                f"• Use MP4 files\n"
-                f"• Keep under 1GB\n"
-                f"• Check subtitle format (.srt)\n"
+                f"💡 **Tips for Sinhala/Tamil subtitles:**\n"
+                f"• Ensure subtitle file is UTF-8 encoded\n"
+                f"• Use MP4 files for best compatibility\n"
+                f"• Keep files under 1GB\n"
                 f"• Use /cancel to restart"
             )
         except Exception:
@@ -541,6 +527,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"⚡ Configured Max Size: {human_readable(MAX_FILE_SIZE)}")
     print(f"🔥 Workers: {WORKERS}")
+    print("🌍 Unicode Support: Sinhala, Tamil, English")
     print("📦 Output: MP4 with burned subtitles")
     print("=" * 50)
 
